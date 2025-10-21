@@ -3,6 +3,7 @@ name: Deploy ALTEO VM (self-hosted)
 on:
   push:
     branches: [ "master" ]
+  workflow_dispatch:
 
 jobs:
   deploy:
