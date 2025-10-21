@@ -1,0 +1,146 @@
+import asyncio
+from datetime import datetime, timezone
+from pyModbusTCP.client import ModbusClient
+from db import get_db_connection
+from breaker import should_skip, on_success, on_failure
+
+# === REGISZTER MAP PV ===
+REGISTER_MAP_PV = {
+    "sum_active_power": {"address": 40525, "quantity": 2, "gain": 1000, "signed": True},
+    "cos_phi": {"address": 40532, "quantity": 1, "gain": 1000, "signed": True},
+    # GHI, panel_temp később kerül ide
+}
+
+# === HELPER FÜGGVÉNYEK ===
+def convert_registers_to_scaled_value(registers, gain, signed=True):
+    """Convert Modbus register list to scaled numeric value"""
+    if not registers:
+        return None
+    if len(registers) == 2:
+        raw = (registers[0] << 16) | registers[1]
+    else:
+        raw = registers[0]
+
+    if signed and raw & 0x80000000:
+        raw = -((~raw & 0xFFFFFFFF) + 1)
+
+    return raw / gain
+
+
+async def get_active_plants():
+    """Lekéri az aktív plant-ek listáját"""
+    loop = asyncio.get_running_loop()
+
+    def _fetch():
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, ip_address, port, logger_slave_id
+            FROM plants
+            WHERE poll_full_enabled = TRUE
+        """)
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [{"id": r[0], "ip": r[1], "port": r[2], "slave": r[3]} for r in rows]
+
+    return await loop.run_in_executor(None, _fetch)
+
+
+async def store_term1_data(data_list):
+    """Gyors batch INSERT a plant_data_term1 táblába"""
+    if not data_list:
+        return
+
+    loop = asyncio.get_running_loop()
+
+    def _insert():
+        conn = get_db_connection()
+        cur = conn.cursor()
+        query = """
+            INSERT INTO plant_data_term1 (
+                plant_id, measured_at, sum_active_power, cos_phi,
+                available_power_min, available_power_max, reference_power,
+                ghi, panel_temp
+            )
+            VALUES %s
+        """
+        values = [
+            (
+                d["plant_id"],
+                d["timestamp"],
+                d["sum_active_power"],
+                d["cos_phi"],
+                d["available_power_min"],
+                d["available_power_max"],
+                d["reference_power"],
+                d["ghi"],
+                d["panel_temp"],
+            )
+            for d in data_list
+        ]
+
+        from psycopg2.extras import execute_values
+        execute_values(cur, query, values)
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    await loop.run_in_executor(None, _insert)
+
+
+async def poll_plant(plant):
+    """Egyetlen plant adatlekérése"""
+    client = ModbusClient(
+        host=plant["ip"], port=plant["port"],
+        unit_id=plant["slave"], auto_open=True, auto_close=True, timeout=1.5
+    )
+
+    try:
+        values = {}
+        for key, meta in REGISTER_MAP_PV.items():
+            regs = client.read_holding_registers(meta["address"], meta["quantity"])
+            val = convert_registers_to_scaled_value(regs, meta["gain"], meta["signed"])
+            values[key] = val
+
+        values["available_power_min"] = 0.0
+        values["available_power_max"] = abs(values["sum_active_power"]) if values["sum_active_power"] else None
+        values["reference_power"] = values["available_power_max"]
+        values["ghi"] = None
+        values["panel_temp"] = None
+
+        return {
+            "plant_id": plant["id"],
+            "timestamp": datetime.now(timezone.utc).replace(microsecond=0),
+            **values,
+        }
+
+    except Exception as e:
+        print(f"[ERR] Plant {plant['id']} – {e}")
+        on_failure(plant["id"])
+        return None
+
+
+async def main():
+    plants = await get_active_plants()
+    print(f"[ALTEO] Starting 2s term1 collector for {len(plants)} plants...")
+
+    while True:
+        start = datetime.now()
+        tasks = []
+        for p in plants:
+            if not should_skip(p["id"]):
+                tasks.append(asyncio.create_task(poll_plant(p)))
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            valid = [r for r in results if isinstance(r, dict)]
+            if valid:
+                await store_term1_data(valid)
+
+        elapsed = (datetime.now() - start).total_seconds()
+        await asyncio.sleep(max(0, 2 - elapsed))  # fix 2s ciklusidő
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
