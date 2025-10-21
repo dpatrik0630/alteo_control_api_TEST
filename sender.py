@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from db import get_db_connection
 from psycopg2.extras import RealDictCursor
 
-API_URL = "https://partner-api.alteo.hu/setpoint"
+API_URL = "https://apim-ap-test.azure-api.net/plant-control/api/setpoint"
 API_KEY = os.getenv("ALTEO_API_KEY")  #.env
 
 CYCLE_TIME = 2
@@ -121,7 +121,7 @@ async def send_to_alteo(pod, measurement):
             print(f"[SEND] POD {pod} OK, status={status}")
         else:
             print(f"[SEND] POD {pod} FAILED, status={status}")
-        store_alteo_response(pod, payload, status)
+        store_alteo_response(pod, {"request": payload, "response": resp.json()}, status)
     except Exception as e:
         print(f"[ERR] POD {pod} – {e}")
 
@@ -134,7 +134,7 @@ async def main():
 
         tasks = []
         for m in measurements:
-            pod = f"plant_{m['plant_id']}"
+            pod = m.get("pod_id") or f"plant_{m['plant_id']}"
             tasks.append(asyncio.create_task(send_to_alteo(pod, m)))
 
         if tasks:
