@@ -59,7 +59,7 @@ async def get_plants_and_ess():
                 e.model AS ess_model
             FROM plants p
             LEFT JOIN ess_units e ON e.plant_id = p.id AND e.active = TRUE
-            WHERE p.poll_full_enabled = TRUE;
+            WHERE p.alteo_api_control = TRUE;
         """)
         rows = cur.fetchall()
         cur.close()
@@ -117,11 +117,11 @@ async def collect_plant_data(plant):
         logger_map = load_register_map("logger", plant["logger_manufacturer"])
         logger_data = await poll_device(ip, port, plant["logger_slave_id"], logger_map)
 
-        ess_results = []
+        """ess_results = []
         for ess in plant["ess_list"]:
             ess_map = load_register_map("ess", ess["manufacturer"], ess["model"])
             ess_data = await poll_device(ip, port, ess["slave_id"], ess_map)
-            ess_results.append(ess_data)
+            ess_results.append(ess_data)"""
 
         record = {
             "plant_id": pid,

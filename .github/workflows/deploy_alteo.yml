@@ -1,0 +1,36 @@
+name: Deploy ALTEO VM (self-hosted)
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    name: Deploy on self-hosted runner
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t alteo_vm:latest .
+
+      - name: Stop old container if running
+        run: |
+          docker stop alteo_vm || true
+          docker rm alteo_vm || true
+
+      - name: Start new container
+        run: |
+          docker run -d \
+            --name alteo_vm \
+            --restart always \
+            -e DB_HOST=${{ secrets.DB_HOST }} \
+            -e DB_PORT=${{ secrets.DB_PORT }} \
+            -e DB_NAME=${{ secrets.DB_NAME }} \
+            -e DB_USER=${{ secrets.DB_USER }} \
+            -e DB_PASSWORD=${{ secrets.DB_PASSWORD }} \
+            -e ALTEO_API_KEY=${{ secrets.ALTEO_API_KEY }} \
+            alteo_vm:latest
