@@ -47,14 +47,18 @@ def get_last_heartbeat(pod_id):
     return row[0] if row else None
 
 
-def store_alteo_response(pod, response_json, status_code):
-    """Elmenti a válasz logját"""
+def store_alteo_response(pod, request_json, response_json, status_code):
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO alteo_send_log (pod, request_json, response_json, status_code)
         VALUES (%s, %s, %s, %s);
-    """, (pod, json.dumps(response_json, ensure_ascii=False), None, status_code))
+    """, (
+        pod,
+        json.dumps(request_json, ensure_ascii=False),
+        json.dumps(response_json, ensure_ascii=False),
+        status_code
+    ))
     conn.commit()
     cur.close()
     conn.close()
@@ -80,39 +84,48 @@ def update_heartbeat_inbox(pod, heartbeat, sum_setpoint, scheduled_reference):
 
 
 def build_payload(pod, measurement, heartbeat_mirrored):
-    """Összeállítja az ALTEO-nak küldendő payloadot"""
-    measured_at = measurement["measured_at"].astimezone(timezone.utc).isoformat()
+    measured_at = (
+        measurement["measured_at"]
+        .astimezone(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
+
     return [
         {
             "pod": pod,
             "values": [
-                {"measurement": "heartbeatMirrored", "value": heartbeat_mirrored, "measuredAt": measured_at, "quality": 1},
-                {"measurement": "availablePowerMin", "value": measurement["available_power_min"], "measuredAt": measured_at, "quality": 1},
-                {"measurement": "availablePowerMax", "value": measurement["available_power_max"], "measuredAt": measured_at, "quality": 1},
-                {"measurement": "sumActivePower", "value": measurement["sum_active_power"], "measuredAt": measured_at, "quality": 1},
-                {"measurement": "cosPhi", "value": measurement["cos_phi"], "measuredAt": measured_at, "quality": 1},
-                {"measurement": "referencePower", "value": measurement["reference_power"], "measuredAt": measured_at, "quality": 1}
+                {"measurement": "heartbeatMirrored", "measuredAt": measured_at, "value": heartbeat_mirrored, "quality": 1},
+                {"measurement": "availablePowerMin", "measuredAt": measured_at, "value": measurement["available_power_min"], "quality": 1},
+                {"measurement": "availablePowerMax", "measuredAt": measured_at, "value": measurement["available_power_max"], "quality": 1},
+                {"measurement": "sumActivePower", "measuredAt": measured_at, "value": measurement["sum_active_power"], "quality": 1},
+                {"measurement": "cosPhi", "measuredAt": measured_at, "value": measurement["cos_phi"], "quality": 1},
+                {"measurement": "referencePower", "measuredAt": measured_at, "value": measurement["reference_power"], "quality": 1},
             ]
         }
     ]
 
 
 async def send_to_alteo(pod, measurement):
-    """Elküldi a mért adatokat az ALTEO API-ra"""
     heartbeat_mirrored = get_last_heartbeat(pod) or 0
     payload = build_payload(pod, measurement, heartbeat_mirrored)
 
     headers = {
         "Content-Type": "application/json",
-        "Ocp-Apim-Subscription-Key": API_KEY
+        "Ocp-Apim-Subscription-Key": API_KEY,
     }
 
     try:
-        resp = requests.post(API_URL, headers=headers, json=payload, timeout=2)
+        resp = requests.post(API_URL, headers=headers, json=payload, timeout=5)
         status = resp.status_code
+
+        try:
+            response_data = resp.json()
+        except Exception:
+            response_data = {"raw_text": resp.text}
+
         if status == 200:
-            data = resp.json()
-            controls = data.get("controls", [])
+            controls = response_data.get("controls", [])
             if controls:
                 hb = controls[0].get("heartbeat")
                 sp = controls[0].get("sumSetPoint")
@@ -121,9 +134,11 @@ async def send_to_alteo(pod, measurement):
             print(f"[SEND] POD {pod} OK, status={status}")
         else:
             print(f"[SEND] POD {pod} FAILED, status={status}")
-        store_alteo_response(pod, {"request": payload, "response": resp.json()}, status)
+
+        store_alteo_response(pod, payload, response_data, status)
+
     except Exception as e:
-        print(f"[ERR] POD {pod} – {e}")
+        print(f"[ERR] POD {pod} – {type(e).__name__}: {e}")
 
 
 async def main():

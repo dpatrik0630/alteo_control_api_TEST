@@ -1,0 +1,61 @@
+{
+  "availableCapacityCharge": {
+    "address": 46,
+    "quantity": 2,
+    "gain": 10,
+    "signed": true
+  },
+  "availableCapacityDischarge": {
+    "address": 48,
+    "quantity": 2,
+    "gain": 10,
+    "signed": true
+  },
+  "averageBatterycellTemp": {
+    "address": 101,
+    "quantity": 1,
+    "gain": 10,
+    "signed": true
+  },
+  "averageBatterycellTempMIN": {
+    "address": 122,
+    "quantity": 1,
+    "gain": 10,
+    "signed": true
+  },
+  "averageBatterycellTempMAX": {
+    "address": 95,
+    "quantity": 1,
+    "gain": 10,
+    "signed": true
+  },
+
+
+
+  
+  "COMMENT": { "EZEK MÉG KÉRDÉSESEK": "temp"},
+
+
+
+
+
+  "averageContainerInsideTemp": {
+    "address": 98,
+    "quantity": 1,
+    "gain": 10,
+    "signed": true
+  },
+  "averageContainerInsideTempMIN": { 
+    "address": 132,
+    "quantity": 1,
+    "gain": 10,
+    "signed": true
+  },
+  "averageContainerInsideTempMAX": {
+    "address": 134,
+    "quantity": 1,
+    "gain": 10,
+    "signed": true
+  }
+}
+

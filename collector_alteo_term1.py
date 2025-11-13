@@ -80,13 +80,13 @@ async def store_term1_data(records):
         cur = conn.cursor()
         execute_values(cur, """
             INSERT INTO plant_data_term1 (
-                plant_id, measured_at, sum_active_power, cos_phi,
+                plant_id, pod_id, measured_at, sum_active_power, cos_phi,
                 available_power_min, available_power_max, reference_power,
                 ghi, panel_temp
             ) VALUES %s
         """, [
             (
-                r["plant_id"], r["timestamp"],
+                r["plant_id"], r["pod_id"], r["timestamp"],
                 r["sum_active_power"], r["cos_phi"],
                 r["available_power_min"], r["available_power_max"],
                 r["reference_power"], r["ghi"], r["panel_temp"]
@@ -99,13 +99,34 @@ async def store_term1_data(records):
     await loop.run_in_executor(None, _insert)
 
 
-async def poll_device(ip, port, slave_id, register_map):
-    """Általános Modbus lekérdezés"""
+def read_cos_phi(client, manufacturer, cosphi_meta):
+    """Gyártófüggő cosφ olvasás"""
+    if manufacturer.lower() == "fronius":
+        regs = client.read_holding_registers(40092 - 1, 2)
+        if not regs or len(regs) < 2:
+            return None
+        pf_raw = regs[0] if regs[0] < 0x8000 else regs[0] - 0x10000
+        pf_sf = regs[1] if regs[1] < 0x8000 else regs[1] - 0x10000
+        return pf_raw * (10 ** pf_sf)
+    else:
+        regs = client.read_holding_registers(cosphi_meta["address"], cosphi_meta["quantity"])
+        return convert_registers_to_scaled_value(regs, cosphi_meta["gain"], cosphi_meta.get("signed", True))
+
+
+async def poll_device(ip, port, slave_id, manufacturer, register_map):
+    """Általános Modbus lekérdezés, gyártófüggő cosφ logikával"""
     client = ModbusClient(host=ip, port=port, unit_id=slave_id, auto_open=True, auto_close=True, timeout=1.5)
     data = {}
-    for key, meta in register_map.items():
-        regs = client.read_holding_registers(meta["address"], meta["quantity"])
-        data[key] = convert_registers_to_scaled_value(regs, meta["gain"], meta.get("signed", True))
+
+    # sum_active_power minden gyártónál ugyanúgy jön
+    sap_meta = register_map.get("sum_active_power")
+    sap_regs = client.read_holding_registers(sap_meta["address"], sap_meta["quantity"])
+    data["sum_active_power"] = convert_registers_to_scaled_value(sap_regs, sap_meta["gain"], sap_meta.get("signed", True))
+
+    # cos_phi külön logikával
+    cosphi_meta = register_map.get("cos_phi")
+    data["cos_phi"] = read_cos_phi(client, manufacturer, cosphi_meta)
+
     return data
 
 
@@ -114,14 +135,13 @@ async def collect_plant_data(plant):
     ip, port, pid = plant["ip"], plant["port"], plant["id"]
 
     try:
-        logger_map = load_register_map("logger", plant["logger_manufacturer"])
-        logger_data = await poll_device(ip, port, plant["logger_slave_id"], logger_map)
+        logger_data = await poll_device(ip, port, plant["logger_slave_id"], plant["logger_manufacturer"], plant["register_map"])
 
-        """ess_results = []
-        for ess in plant["ess_list"]:
-            ess_map = load_register_map("ess", ess["manufacturer"], ess["model"])
-            ess_data = await poll_device(ip, port, ess["slave_id"], ess_map)
-            ess_results.append(ess_data)"""
+        # --- cosφ validálás (-1 és 1 közé kell essen) ---
+        cos_phi = logger_data.get("cos_phi")
+        if cos_phi is not None and not (-1 <= cos_phi <= 1):
+            print(f"[WARN] Plant {pid} → Invalid cosφ value {cos_phi:.4f}, setting to None")
+            cos_phi = None
 
         record = {
             "plant_id": pid,
@@ -145,19 +165,22 @@ async def collect_plant_data(plant):
 
 
 async def main():
+    # ✅ Egyszer töltjük be a plant listát
     rows = await get_plants_and_ess()
     plants = {}
 
     for r in rows:
         pid = r[0]
         if pid not in plants:
+            manufacturer = r[6]
             plants[pid] = {
                 "id": r[0],
                 "pod_id": r[1],
                 "ip": r[3],
                 "port": r[4],
                 "logger_slave_id": r[5],
-                "logger_manufacturer": r[6],
+                "logger_manufacturer": manufacturer,
+                "register_map": load_register_map("logger", manufacturer),  # előre betöltve
                 "ess_list": [],
             }
         if r[7]:
