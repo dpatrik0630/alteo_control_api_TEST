@@ -143,8 +143,11 @@ async def collect_plant_data(plant):
             print(f"[WARN] Plant {pid} → Invalid cosφ value {cos_phi:.4f}, setting to None")
             cos_phi = None
 
+        pod_id = plant.get("pod_id")
+
         record = {
             "plant_id": pid,
+            "pod_id": pod_id,
             "timestamp": datetime.now(timezone.utc).replace(microsecond=0),
             "sum_active_power": logger_data.get("sum_active_power"),
             "cos_phi": logger_data.get("cos_phi"),
