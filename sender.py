@@ -107,8 +107,22 @@ def build_payload(pod, measurement, heartbeat_mirrored):
 
 
 async def send_to_alteo(pod, measurement):
-    heartbeat_mirrored = get_last_heartbeat(pod) or 0
+    #heartbeat_mirrored = get_last_heartbeat(pod) or 0
+    #payload = build_payload(pod, measurement, heartbeat_mirrored)
+
+    heartbeat_mirrored = get_last_heartbeat(pod)
+
+    if heartbeat_mirrored is None:
+        print(f"[SENDER] POD {pod} – no heartbeat yet, skipping send")
+        return
+    
+    # Opcionális
+    if heartbeat_mirrored <= 0:
+        print(f"[SENDER] POD {pod} – invalid heartbeat {heartbeat_mirrored}, skipping")
+        return
+
     payload = build_payload(pod, measurement, heartbeat_mirrored)
+
 
     headers = {
         "Content-Type": "application/json",
