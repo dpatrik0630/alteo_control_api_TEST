@@ -15,6 +15,8 @@ POLL_INTERVAL = 2
 MODBUS_TIMEOUT = 2
 HITHIUM_MAP_PATH = Path("register_maps/ess/hithium.json")
 
+print("[ESS] poll_ess_hithium started")
+
 
 # ---------- helpers ----------
 
@@ -115,7 +117,10 @@ def poll_single_ess(ess, hithium_map):
 async def poll_ess(ess, hithium_map):
     '''if should_skip(ess["plant_id"]):
         return'''
-    print(f"[ESS] Polling ESS for plant {ess['plant_id']} at {ess['ip_address']}:{ess['port']}")
+    print(
+        f"[ESS] Polling ESS plant_id={ess['plant_id']} "
+        f"ip={ess['ip_address']}:{ess['port']}"
+    )
 
     try:
         loop = asyncio.get_running_loop()
@@ -173,6 +178,7 @@ async def poll_ess(ess, hithium_map):
 # ---------- main loop ----------
 
 async def main():
+    print("[ESS] poll_ess_hithium started")
     hithium_map = load_hithium_map()
 
     conn = get_db_connection()
