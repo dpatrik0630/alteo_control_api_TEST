@@ -8,7 +8,7 @@ from pyModbusTCP.client import ModbusClient
 from db import get_db_connection
 from breaker import should_skip, on_failure, on_success
 
-
+TARGET_PERIOD = 2.0
 print("[ESS] poll_ess_hithium started")
 
 
@@ -146,22 +146,26 @@ def main():
     ]
 
     while True:
+        cycle_start = time.monotonic()
+
         for ess in ess_units:
             plant_id = ess["plant_id"]
 
             if should_skip(plant_id):
-                print(f"[ESS] Skipping plant {plant_id} due to breaker cooldown")
                 continue
 
             try:
                 poll_ess_unit(ess, cur)
                 on_success(plant_id)
-
             except Exception as e:
                 print(f"[ESS][ERROR] Plant {plant_id} → {e}")
                 on_failure(plant_id)
 
-        time.sleep(2)
+        elapsed = time.monotonic() - cycle_start
+        sleep_time = TARGET_PERIOD - elapsed
+
+        if sleep_time > 0:
+            time.sleep(sleep_time)
 
 
 if __name__ == "__main__":
