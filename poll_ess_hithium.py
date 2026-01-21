@@ -1,7 +1,6 @@
 import time
 import struct
-import psycopg2
-from psycopg2.extras import execute_values
+import asyncio
 from datetime import datetime, timezone
 
 from pyModbusTCP.client import ModbusClient
@@ -9,6 +8,7 @@ from db import get_db_connection
 from breaker import should_skip, on_failure, on_success
 
 TARGET_PERIOD = 2.0
+
 print("[ESS] poll_ess_hithium started")
 
 
@@ -49,7 +49,7 @@ def calculate_capacity(total_kwh, soc, min_soc=0, max_soc=100):
     return max(charge, 0), max(discharge, 0)
 
 
-# ---------- ESS polling ----------
+# ---------- SYNC ESS POLL (VÁLTOZATLAN LOGIKA) ----------
 
 def poll_ess_unit(ess, cur):
     print(f"[ESS] Polling ESS plant_id={ess['plant_id']} ip={ess['ip_address']}:{ess['port']}")
@@ -64,25 +64,18 @@ def poll_ess_unit(ess, cur):
     if not client.open():
         raise Exception("Modbus connection failed")
 
-    # --- CORE VALUES ---
     soc = read_uint16(client, 1) / 10.0
     total_capacity = read_float32(client, 2)
-    pcs_active_power = read_float32(client, 4)
 
-    # --- BATTERY TEMPS ---
     batt_avg = avg([read_int16(client, 100 + i) / 10.0 for i in range(5)])
     batt_min = avg([read_int16(client, 200 + i) / 10.0 for i in range(5)])
     batt_max = avg([read_int16(client, 300 + i) / 10.0 for i in range(5)])
 
-    # --- CONTAINER TEMPS ---
     cont_avg = avg([read_int16(client, 400 + i) / 10.0 for i in range(5)])
     cont_min = min([read_int16(client, 400 + i) / 10.0 for i in range(5)])
     cont_max = max([read_int16(client, 400 + i) / 10.0 for i in range(5)])
 
-    charge_kwh, discharge_kwh = calculate_capacity(
-        total_capacity,
-        soc
-    )
+    charge_kwh, discharge_kwh = calculate_capacity(total_capacity, soc)
 
     now = datetime.now(timezone.utc)
 
@@ -117,12 +110,29 @@ def poll_ess_unit(ess, cur):
             soc
         )
     )
+
     client.close()
 
 
-# ---------- MAIN LOOP ----------
+# ---------- ASYNC WRAPPER ----------
 
-def main():
+async def poll_single_ess_async(ess, cur):
+    plant_id = ess["plant_id"]
+
+    if should_skip(plant_id):
+        return
+
+    try:
+        await asyncio.to_thread(poll_ess_unit, ess, cur)
+        on_success(plant_id)
+    except Exception as e:
+        print(f"[ESS][ERROR] Plant {plant_id} → {e}")
+        on_failure(plant_id)
+
+
+# ---------- ASYNC MAIN LOOP ----------
+
+async def main_async():
     conn = get_db_connection()
     conn.autocommit = True
     cur = conn.cursor()
@@ -132,41 +142,32 @@ def main():
         FROM ess_units
         WHERE active = true
     """)
-    ess_units = cur.fetchall()
-
-    print(f"[ESS] Found {len(ess_units)} active ESS units")
 
     ess_units = [
-        {
-            "plant_id": e[0],
-            "ip_address": e[1],
-            "port": e[2]
-        }
-        for e in ess_units
+        {"plant_id": r[0], "ip_address": r[1], "port": r[2]}
+        for r in cur.fetchall()
     ]
+
+    print(f"[ESS] Found {len(ess_units)} active ESS units")
 
     while True:
         cycle_start = time.monotonic()
 
-        for ess in ess_units:
-            plant_id = ess["plant_id"]
+        tasks = [
+            poll_single_ess_async(ess, cur)
+            for ess in ess_units
+        ]
 
-            if should_skip(plant_id):
-                continue
-
-            try:
-                poll_ess_unit(ess, cur)
-                on_success(plant_id)
-            except Exception as e:
-                print(f"[ESS][ERROR] Plant {plant_id} → {e}")
-                on_failure(plant_id)
+        await asyncio.gather(*tasks)
 
         elapsed = time.monotonic() - cycle_start
         sleep_time = TARGET_PERIOD - elapsed
 
         if sleep_time > 0:
-            time.sleep(sleep_time)
+            await asyncio.sleep(sleep_time)
 
+
+# ---------- ENTRYPOINT ----------
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main_async())
