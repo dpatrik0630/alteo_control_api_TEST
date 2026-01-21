@@ -1,216 +1,168 @@
-# poll_ess_hithium.py
-
-import asyncio
-import json
+import time
+import struct
+import psycopg2
+from psycopg2.extras import execute_values
 from datetime import datetime, timezone
-from pathlib import Path
 
 from pyModbusTCP.client import ModbusClient
-
 from db import get_db_connection
-from breaker import should_skip, on_success, on_failure
-
-
-POLL_INTERVAL = 2
-MODBUS_TIMEOUT = 2
-HITHIUM_MAP_PATH = Path("register_maps/ess/hithium.json")
+from breaker import Breaker
 
 print("[ESS] poll_ess_hithium started")
 
 
-# ---------- helpers ----------
+# ---------- Modbus helpers ----------
 
-def load_hithium_map():
-    with open(HITHIUM_MAP_PATH, "r") as f:
-        return json.load(f)
+def read_uint16(client, addr):
+    regs = client.read_input_registers(addr, 1)
+    if not regs:
+        raise Exception(f"Modbus read failed at {addr}")
+    return regs[0]
 
 
-def aggregate(values):
+def read_int16(client, addr):
+    regs = client.read_input_registers(addr, 1)
+    if not regs:
+        raise Exception(f"Modbus read failed at {addr}")
+    val = regs[0]
+    return val - 0x10000 if val & 0x8000 else val
+
+
+def read_float32(client, addr):
+    regs = client.read_input_registers(addr, 2)
+    if not regs or len(regs) < 2:
+        raise Exception(f"Modbus float read failed at {addr}")
+    raw = (regs[0] << 16) | regs[1]
+    return struct.unpack(">f", raw.to_bytes(4, "big"))[0]
+
+
+def avg(values):
     vals = [v for v in values if v is not None]
-    if not vals:
-        return None, None, None
-    return sum(vals) / len(vals), min(vals), max(vals)
+    return sum(vals) / len(vals) if vals else None
 
 
-def calculate_capacity(total_kwh, soc, min_soc, max_soc):
-    current = total_kwh * soc / 100
-    charge = total_kwh * max_soc / 100 - current
-    discharge = current - total_kwh * min_soc / 100
+def calculate_capacity(total_kwh, soc, min_soc=0, max_soc=100):
+    current = total_kwh * soc / 100.0
+    charge = total_kwh * max_soc / 100.0 - current
+    discharge = current - total_kwh * min_soc / 100.0
     return max(charge, 0), max(discharge, 0)
 
 
-def read_registers(client, cfg):
-    if cfg.get("fc") == 3:
-        regs = client.read_holding_registers(cfg["address"], cfg["quantity"])
-    else:
-        regs = client.read_input_registers(cfg["address"], cfg["quantity"])
+# ---------- ESS polling ----------
 
-    if regs is None:
-        raise Exception(f"Modbus read failed at address {cfg['address']}")
+def poll_ess_unit(ess, breaker, cur):
+    print(f"[ESS] Polling ESS plant_id={ess['plant_id']} ip={ess['ip_address']}:{ess['port']}")
 
-    print(f"[ESS] {cfg['address']} → {regs}")
-
-    values = []
-    for r in regs:
-        v = r
-        if cfg.get("signed") and v >= 32768:
-            v -= 65536
-        if "gain" in cfg:
-            v = v / cfg["gain"]
-        values.append(v)
-
-    return values
-
-
-# ---------- ESS polling (sync) ----------
-
-def poll_single_ess(ess, hithium_map):
     client = ModbusClient(
         host=ess["ip_address"],
         port=ess["port"],
-        unit_id=ess["slave_id"],
         auto_open=True,
-        auto_close=True,
-        timeout=MODBUS_TIMEOUT
+        timeout=3
     )
 
-    raw = {}
-    for key, cfg in hithium_map.items():
-        try:
-            raw[key] = read_registers(client, cfg)
-        except Exception as e:
-            print(f"[ESS] {ess['plant_id']} register {key} failed: {e}")
-            raw[key] = []
+    if not client.open():
+        raise Exception("Modbus connection failed")
 
-    for k in ("totalCapacity", "averageCurrentSOC", "allowedMinSOC", "allowedMaxSOC"):
-        if not raw.get(k) or not raw[k]:
-            raise Exception(f"[ESS] Missing required value: {k}")
+    # --- CORE VALUES ---
+    soc = read_uint16(client, 1) / 10.0
+    total_capacity = read_float32(client, 2)
+    pcs_active_power = read_float32(client, 4)
 
+    # --- BATTERY TEMPS ---
+    batt_avg = avg([read_int16(client, 100 + i) / 10.0 for i in range(5)])
+    batt_min = avg([read_int16(client, 200 + i) / 10.0 for i in range(5)])
+    batt_max = avg([read_int16(client, 300 + i) / 10.0 for i in range(5)])
 
-    avg_batt, min_batt, max_batt = aggregate(raw["averageBatterycellTemp"])
-    avg_cont, min_cont, max_cont = aggregate(raw["averageContainerInsideTemp"])
+    # --- CONTAINER TEMPS ---
+    cont_avg = avg([read_int16(client, 400 + i) / 10.0 for i in range(5)])
+    cont_min = min([read_int16(client, 400 + i) / 10.0 for i in range(5)])
+    cont_max = max([read_int16(client, 400 + i) / 10.0 for i in range(5)])
 
     charge_kwh, discharge_kwh = calculate_capacity(
-        raw["totalCapacity"][0],
-        raw["averageCurrentSOC"][0],
-        raw["allowedMinSOC"][0],
-        raw["allowedMaxSOC"][0]
+        total_capacity,
+        soc
     )
 
-    return {
-        "avg_batt": avg_batt,
-        "min_batt": min_batt,
-        "max_batt": max_batt,
-        "avg_cont": avg_cont,
-        "min_cont": min_cont,
-        "max_cont": max_cont,
-        "soc": raw["averageCurrentSOC"][0],
-        "min_soc": raw["allowedMinSOC"][0],
-        "max_soc": raw["allowedMaxSOC"][0],
-        "charge_kwh": charge_kwh,
-        "discharge_kwh": discharge_kwh,
+    now = datetime.now(timezone.utc)
+
+    cur.execute(
+        """
+        INSERT INTO ess_data_term1 (
+            plant_id,
+            measured_at,
+            avg_batt_temp,
+            min_batt_temp,
+            max_batt_temp,
+            avg_container_temp,
+            min_container_temp,
+            max_container_temp,
+            available_capacity_charge,
+            available_capacity_discharge,
+            average_current_soc
+        )
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """,
+        (
+            ess["plant_id"],
+            now,
+            batt_avg,
+            batt_min,
+            batt_max,
+            cont_avg,
+            cont_min,
+            cont_max,
+            charge_kwh,
+            discharge_kwh,
+            soc
+        )
+    )
+
+    breaker.success()
+    client.close()
+
+
+# ---------- MAIN LOOP ----------
+
+def main():
+    conn = get_db_connection()
+    conn.autocommit = True
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT plant_id, ip_address, port
+        FROM ess_units
+        WHERE active = true
+    """)
+    ess_units = cur.fetchall()
+
+    print(f"[ESS] Found {len(ess_units)} active ESS units")
+
+    breakers = {
+        e[0]: Breaker()
+        for e in ess_units
     }
 
-
-# ---------- async wrapper ----------
-
-async def poll_ess(ess, hithium_map):
-    '''if should_skip(ess["plant_id"]):
-        return'''
-    print(
-        f"[ESS] Polling ESS plant_id={ess['plant_id']} "
-        f"ip={ess['ip_address']}:{ess['port']}"
-    )
-
-    try:
-        loop = asyncio.get_running_loop()
-        data = await loop.run_in_executor(
-            None,
-            poll_single_ess,
-            ess,
-            hithium_map
-        )
-
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO ess_data_term1 (
-                plant_id,
-                measured_at,
-                avg_batt_temp,
-                min_batt_temp,
-                max_batt_temp,
-                avg_container_temp,
-                min_container_temp,
-                max_container_temp,
-                available_capacity_charge,
-                available_capacity_discharge,
-                average_current_soc,
-                allowed_min_soc,
-                allowed_max_soc
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        """, (
-            ess["plant_id"],
-            datetime.now(timezone.utc),
-            data["avg_batt"],
-            data["min_batt"],
-            data["max_batt"],
-            data["avg_cont"],
-            data["min_cont"],
-            data["max_cont"],
-            data["charge_kwh"],
-            data["discharge_kwh"],
-            data["soc"],
-            data["min_soc"],
-            data["max_soc"],
-        ))
-        conn.commit()
-        cur.close()
-        conn.close()
-
-        on_success(ess["plant_id"])
-
-    except Exception as e:
-        print(f"[ESS] Plant {ess['plant_id']} error: {e}")
-        on_failure(ess["plant_id"])
-
-
-# ---------- main loop ----------
-
-async def main():
-    print("[ESS] poll_ess_hithium started")
-    hithium_map = load_hithium_map()
-
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT
-            e.plant_id,
-            e.ip_address,
-            e.port,
-            e.slave_id
-        FROM ess_units e
-        WHERE e.active = true
-    """)
     ess_units = [
         {
-            "plant_id": r[0],
-            "ip_address": r[1],
-            "port": r[2],
-            "slave_id": r[3],
+            "plant_id": e[0],
+            "ip_address": e[1],
+            "port": e[2]
         }
-        for r in cur.fetchall()
+        for e in ess_units
     ]
-    cur.close()
-    conn.close()
-
-    print(f"[ESS] Polling {len(ess_units)} ESS units")
 
     while True:
-        tasks = [poll_ess(e, hithium_map) for e in ess_units]
-        await asyncio.gather(*tasks)
-        await asyncio.sleep(POLL_INTERVAL)
+        for ess in ess_units:
+            b = breakers[ess["plant_id"]]
+            if not b.allowed():
+                continue
+            try:
+                poll_ess_unit(ess, b, cur)
+            except Exception as e:
+                print(f"[ESS][ERROR] Plant {ess['plant_id']} → {e}")
+                b.fail(e)
+        time.sleep(2)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
