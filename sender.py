@@ -1,89 +1,136 @@
 import asyncio
 import json
-import requests
 import os
-from datetime import datetime, timezone
-from db import get_db_connection
+import time
+import requests
+from datetime import timezone
+
 from psycopg2.extras import RealDictCursor
+
+from db import get_db_connection
+
 
 API_URL = "https://apim-ap-test.azure-api.net/plant-control/api/setpoint"
 API_KEY = os.getenv("ALTEO_API_KEY")  #.env
-
 CYCLE_TIME = 2
 
 
+# -------------------------------------------------
+# DB helpers
+# -------------------------------------------------
+
 def get_latest_plant_data():
-    """Lekéri a legfrissebb adatokat minden plant-hez"""
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
+
     cur.execute("""
         SELECT DISTINCT ON (plant_id)
-            plant_id, measured_at,
-            sum_active_power, cos_phi,
-            available_power_min, available_power_max, reference_power
+            plant_id,
+            pod,
+            measured_at,
+            sum_active_power,
+            cos_phi,
+            available_power_min,
+            available_power_max,
+            reference_power
         FROM plant_data_term1
-        ORDER BY plant_id, measured_at DESC;
+        ORDER BY plant_id, measured_at DESC
     """)
+
     rows = cur.fetchall()
     cur.close()
     conn.close()
     return rows
 
 
-def get_last_heartbeat(pod_id):
-    """Lekéri az utolsó heartbeat-et az adott POD-hoz"""
+def get_latest_ess_data(plant_id):
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    cur.execute("""
+        SELECT *
+        FROM ess_data_term1
+        WHERE plant_id = %s
+        ORDER BY measured_at DESC
+        LIMIT 1
+    """, (plant_id,))
+
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row
+
+
+def get_last_heartbeat(pod):
     conn = get_db_connection()
     cur = conn.cursor()
+
     cur.execute("""
         SELECT heartbeat
-        FROM alteo_controls_inbox
+        FROM alteo_control_inbox
         WHERE pod = %s
         ORDER BY received_at DESC
-        LIMIT 1;
-    """, (pod_id,))
+        LIMIT 1
+    """, (pod,))
+
     row = cur.fetchone()
     cur.close()
     conn.close()
     return row[0] if row else None
 
 
-def store_alteo_response(pod, request_json, response_json, status_code):
+def store_alteo_response(pod, payload, response, status):
     conn = get_db_connection()
     cur = conn.cursor()
+
     cur.execute("""
-        INSERT INTO alteo_send_log (pod, request_json, response_json, status_code)
-        VALUES (%s, %s, %s, %s);
+        INSERT INTO alteo_send_log (
+            pod,
+            request_payload,
+            response_payload,
+            http_status
+        ) VALUES (%s,%s,%s,%s)
     """, (
         pod,
-        json.dumps(request_json, ensure_ascii=False),
-        json.dumps(response_json, ensure_ascii=False),
-        status_code
+        json.dumps(payload),
+        json.dumps(response),
+        status
     ))
+
     conn.commit()
     cur.close()
     conn.close()
 
 
 def update_heartbeat_inbox(pod, heartbeat, sum_setpoint, scheduled_reference):
-    """Frissíti / beszúrja az új heartbeat értéket"""
     conn = get_db_connection()
     cur = conn.cursor()
+
     cur.execute("""
-        INSERT INTO alteo_controls_inbox (pod, heartbeat, sum_setpoint, scheduled_reference)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (pod)
-        DO UPDATE SET
-          heartbeat = EXCLUDED.heartbeat,
-          sum_setpoint = EXCLUDED.sum_setpoint,
-          scheduled_reference = EXCLUDED.scheduled_reference,
-          received_at = NOW();
-    """, (pod, heartbeat, sum_setpoint, scheduled_reference))
+        INSERT INTO alteo_control_inbox (
+            pod,
+            heartbeat,
+            sum_setpoint,
+            scheduled_reference
+        ) VALUES (%s,%s,%s,%s)
+    """, (
+        pod,
+        heartbeat,
+        sum_setpoint,
+        scheduled_reference
+    ))
+
     conn.commit()
     cur.close()
     conn.close()
 
 
-def build_payload(pod, measurement, heartbeat_mirrored):
+# -------------------------------------------------
+# Payload builder
+# -------------------------------------------------
+
+def build_payload(measurement, ess_data, heartbeat_mirrored):
+    pod = measurement["pod"]
     measured_at = (
         measurement["measured_at"]
         .astimezone(timezone.utc)
@@ -91,42 +138,82 @@ def build_payload(pod, measurement, heartbeat_mirrored):
         .replace("+00:00", "Z")
     )
 
-    return [
+    values = [
         {
-            "pod": pod,
-            "values": [
-                {"measurement": "heartbeatMirrored", "measuredAt": measured_at, "value": heartbeat_mirrored, "quality": 1},
-                {"measurement": "availablePowerMin", "measuredAt": measured_at, "value": measurement["available_power_min"], "quality": 1},
-                {"measurement": "availablePowerMax", "measuredAt": measured_at, "value": measurement["available_power_max"], "quality": 1},
-                {"measurement": "sumActivePower", "measuredAt": measured_at, "value": measurement["sum_active_power"], "quality": 1},
-                {"measurement": "cosPhi", "measuredAt": measured_at, "value": measurement["cos_phi"], "quality": 1},
-                {"measurement": "referencePower", "measuredAt": measured_at, "value": measurement["reference_power"], "quality": 1},
-            ]
+            "measurement": "heartbeatMirrored",
+            "measuredAt": measured_at,
+            "value": heartbeat_mirrored,
+            "quality": 1
+        },
+        {
+            "measurement": "availablePowerMin",
+            "measuredAt": measured_at,
+            "value": measurement["available_power_min"],
+            "quality": 1
+        },
+        {
+            "measurement": "availablePowerMax",
+            "measuredAt": measured_at,
+            "value": measurement["available_power_max"],
+            "quality": 1
+        },
+        {
+            "measurement": "sumActivePower",
+            "measuredAt": measured_at,
+            "value": measurement["sum_active_power"],
+            "quality": 1
+        },
+        {
+            "measurement": "cosPhi",
+            "measuredAt": measured_at,
+            "value": measurement["cos_phi"],
+            "quality": 1
+        },
+        {
+            "measurement": "referencePower",
+            "measuredAt": measured_at,
+            "value": measurement["reference_power"],
+            "quality": 1
         }
     ]
 
+    # -------- ESS EXTENSION --------
+    if ess_data:
+        values.extend([
+            {"measurement": "availableCapacityCharge", "measuredAt": measured_at, "value": ess_data["available_capacity_charge"], "quality": 1},
+            {"measurement": "availableCapacityDischarge", "measuredAt": measured_at, "value": ess_data["available_capacity_discharge"], "quality": 1},
+            {"measurement": "averageBatterycellTemp", "measuredAt": measured_at, "value": ess_data["avg_batt_temp"], "quality": 1},
+            {"measurement": "averageBatterycellTempMIN", "measuredAt": measured_at, "value": ess_data["min_batt_temp"], "quality": 1},
+            {"measurement": "averageBatterycellTempMAX", "measuredAt": measured_at, "value": ess_data["max_batt_temp"], "quality": 1},
+            {"measurement": "averageContainerInsideTemp", "measuredAt": measured_at, "value": ess_data["avg_container_temp"], "quality": 1},
+            {"measurement": "averageContainerInsideTempMIN", "measuredAt": measured_at, "value": ess_data["min_container_temp"], "quality": 1},
+            {"measurement": "averageContainerInsideTempMAX", "measuredAt": measured_at, "value": ess_data["max_container_temp"], "quality": 1},
+            {"measurement": "averageCurrentSOC", "measuredAt": measured_at, "value": ess_data["average_current_soc"], "quality": 1},
+            {"measurement": "allowedMinSOC", "measuredAt": measured_at, "value": ess_data["allowed_min_soc"], "quality": 1},
+            {"measurement": "allowedMaxSOC", "measuredAt": measured_at, "value": ess_data["allowed_max_soc"], "quality": 1},
+        ])
 
-async def send_to_alteo(pod, measurement):
-    #heartbeat_mirrored = get_last_heartbeat(pod) or 0
-    #payload = build_payload(pod, measurement, heartbeat_mirrored)
+    return [{"pod": pod, "values": values}]
 
-    heartbeat_mirrored = get_last_heartbeat(pod)
 
-    if heartbeat_mirrored is None:
-        print(f"[SENDER] POD {pod} – no heartbeat yet, skipping send")
+# -------------------------------------------------
+# Sender loop
+# -------------------------------------------------
+
+async def send_once(measurement):
+    pod = measurement["pod"]
+    heartbeat = get_last_heartbeat(pod)
+
+    if heartbeat is None or heartbeat <= 0:
+        print(f"[SENDER] POD {pod}: no valid heartbeat, skipping")
         return
-    
-    # Opcionális
-    if heartbeat_mirrored <= 0:
-        print(f"[SENDER] POD {pod} – invalid heartbeat {heartbeat_mirrored}, skipping")
-        return
 
-    payload = build_payload(pod, measurement, heartbeat_mirrored)
-
+    ess_data = get_latest_ess_data(measurement["plant_id"])
+    payload = build_payload(measurement, ess_data, heartbeat)
 
     headers = {
         "Content-Type": "application/json",
-        "Ocp-Apim-Subscription-Key": API_KEY,
+        "Ocp-Apim-Subscription-Key": API_KEY
     }
 
     try:
@@ -141,36 +228,31 @@ async def send_to_alteo(pod, measurement):
         if status == 200:
             controls = response_data.get("controls", [])
             if controls:
-                hb = controls[0].get("heartbeat")
-                sp = controls[0].get("sumSetPoint")
-                sr = controls[0].get("scheduledReference")
-                update_heartbeat_inbox(pod, hb, sp, sr)
-            print(f"[SEND] POD {pod} OK, status={status}")
+                c = controls[0]
+                update_heartbeat_inbox(
+                    pod,
+                    c.get("heartbeat"),
+                    c.get("sumSetPoint"),
+                    c.get("scheduledReference")
+                )
+            print(f"[SEND] POD {pod} OK")
         else:
-            print(f"[SEND] POD {pod} FAILED, status={status}")
+            print(f"[SEND] POD {pod} FAILED ({status})")
 
         store_alteo_response(pod, payload, response_data, status)
 
     except Exception as e:
-        print(f"[ERR] POD {pod} – {type(e).__name__}: {e}")
+        print(f"[ERROR] POD {pod}: {e}")
 
 
 async def main():
-    print("[SENDER] Starting ALTEO sender loop...")
+    print("[SENDER] Started")
+
     while True:
-        start = datetime.now()
         measurements = get_latest_plant_data()
-
-        tasks = []
-        for m in measurements:
-            pod = m.get("pod_id") or f"plant_{m['plant_id']}"
-            tasks.append(asyncio.create_task(send_to_alteo(pod, m)))
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-        elapsed = (datetime.now() - start).total_seconds()
-        await asyncio.sleep(max(0, CYCLE_TIME - elapsed))
+        tasks = [send_once(m) for m in measurements]
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.sleep(CYCLE_TIME)
 
 
 if __name__ == "__main__":
