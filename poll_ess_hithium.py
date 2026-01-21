@@ -108,8 +108,9 @@ def poll_single_ess(ess, hithium_map):
 # ---------- async wrapper ----------
 
 async def poll_ess(ess, hithium_map):
-    if should_skip(ess["plant_id"]):
-        return
+    '''if should_skip(ess["plant_id"]):
+        return'''
+    print(f"[ESS] Polling ESS for plant {ess['plant_id']} at {ess['ip_address']}:{ess['port']}")
 
     try:
         loop = asyncio.get_running_loop()
@@ -178,7 +179,7 @@ async def main():
             e.port,
             e.slave_id
         FROM ess_units e
-        WHERE e.active = TRUE
+        WHERE e.active = true
     """)
     ess_units = [
         {
