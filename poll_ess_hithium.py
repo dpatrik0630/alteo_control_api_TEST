@@ -41,6 +41,7 @@ def read_registers(client, cfg):
     regs = client.read_input_registers(cfg["address"], cfg["quantity"])
     if regs is None:
         raise Exception(f"Modbus read failed at address {cfg['address']}")
+    print("[ESS] Raw SOC regs:", regs)
 
     values = []
     for r in regs:
