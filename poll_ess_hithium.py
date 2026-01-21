@@ -38,9 +38,14 @@ def calculate_capacity(total_kwh, soc, min_soc, max_soc):
 
 
 def read_registers(client, cfg):
-    regs = client.read_input_registers(cfg["address"], cfg["quantity"])
+    if cfg.get("fc") == 3:
+        regs = client.read_holding_registers(cfg["address"], cfg["quantity"])
+    else:
+        regs = client.read_input_registers(cfg["address"], cfg["quantity"])
+
     if regs is None:
         raise Exception(f"Modbus read failed at address {cfg['address']}")
+
     print(f"[ESS] {cfg['address']} → {regs}")
 
     values = []
@@ -197,7 +202,7 @@ async def main():
 
     while True:
         tasks = [poll_ess(e, hithium_map) for e in ess_units]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*tasks)
         await asyncio.sleep(POLL_INTERVAL)
 
 
