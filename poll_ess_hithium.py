@@ -41,7 +41,7 @@ def read_registers(client, cfg):
     regs = client.read_input_registers(cfg["address"], cfg["quantity"])
     if regs is None:
         raise Exception(f"Modbus read failed at address {cfg['address']}")
-    print("[ESS] Raw SOC regs:", regs)
+    print(f"[ESS] {cfg['address']} → {regs}")
 
     values = []
     for r in regs:
@@ -74,6 +74,10 @@ def poll_single_ess(ess, hithium_map):
         except Exception as e:
             print(f"[ESS] {ess['plant_id']} register {key} failed: {e}")
             raw[key] = []
+
+    for k in ("totalCapacity", "averageCurrentSOC", "allowedMinSOC", "allowedMaxSOC"):
+        if not raw.get(k) or not raw[k]:
+            raise Exception(f"[ESS] Missing required value: {k}")
 
 
     avg_batt, min_batt, max_batt = aggregate(raw["averageBatterycellTemp"])
