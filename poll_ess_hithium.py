@@ -51,7 +51,7 @@ def calculate_capacity(total_kwh, soc, min_soc=0, max_soc=100):
 
 # ---------- ESS polling ----------
 
-def poll_ess_unit(ess, breaker, cur):
+def poll_ess_unit(ess, cur):
     print(f"[ESS] Polling ESS plant_id={ess['plant_id']} ip={ess['ip_address']}:{ess['port']}")
 
     client = ModbusClient(
@@ -117,8 +117,6 @@ def poll_ess_unit(ess, breaker, cur):
             soc
         )
     )
-
-    breaker.success()
     client.close()
 
 
@@ -138,11 +136,6 @@ def main():
 
     print(f"[ESS] Found {len(ess_units)} active ESS units")
 
-    breakers = {
-        e[0]: Breaker()
-        for e in ess_units
-    }
-
     ess_units = [
         {
             "plant_id": e[0],
@@ -154,14 +147,20 @@ def main():
 
     while True:
         for ess in ess_units:
-            b = breakers[ess["plant_id"]]
-            if not b.allowed():
+            plant_id = ess["plant_id"]
+
+            if should_skip(plant_id):
+                print(f"[ESS] Skipping plant {plant_id} due to breaker cooldown")
                 continue
+
             try:
-                poll_ess_unit(ess, b, cur)
+                poll_ess_unit(ess, cur)
+                on_success(plant_id)
+
             except Exception as e:
-                print(f"[ESS][ERROR] Plant {ess['plant_id']} → {e}")
-                b.fail(e)
+                print(f"[ESS][ERROR] Plant {plant_id} → {e}")
+                on_failure(plant_id)
+
         time.sleep(2)
 
 
