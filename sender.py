@@ -130,7 +130,7 @@ def update_heartbeat_inbox(pod, heartbeat, sum_setpoint, scheduled_reference):
 # -------------------------------------------------
 
 def build_payload(measurement, ess_data, heartbeat_mirrored):
-    pod = measurement["pod"]
+    pod = measurement["pod_id"]
     measured_at = (
         measurement["measured_at"]
         .astimezone(timezone.utc)
@@ -201,7 +201,7 @@ def build_payload(measurement, ess_data, heartbeat_mirrored):
 # -------------------------------------------------
 
 async def send_once(measurement):
-    pod = measurement["pod"]
+    pod = measurement["pod_id"]
     heartbeat = get_last_heartbeat(pod)
 
     if heartbeat is None or heartbeat <= 0:

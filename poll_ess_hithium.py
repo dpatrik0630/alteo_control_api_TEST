@@ -68,7 +68,12 @@ def poll_single_ess(ess, hithium_map):
 
     raw = {}
     for key, cfg in hithium_map.items():
-        raw[key] = read_registers(client, cfg)
+        try:
+            raw[key] = read_registers(client, cfg)
+        except Exception as e:
+            print(f"[ESS] {ess['plant_id']} register {key} failed: {e}")
+            raw[key] = []
+
 
     avg_batt, min_batt, max_batt = aggregate(raw["averageBatterycellTemp"])
     avg_cont, min_cont, max_cont = aggregate(raw["averageContainerInsideTemp"])
