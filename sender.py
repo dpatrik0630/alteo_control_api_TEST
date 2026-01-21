@@ -26,7 +26,7 @@ def get_latest_plant_data():
     cur.execute("""
         SELECT DISTINCT ON (plant_id)
             plant_id,
-            pod,
+            pod_id,
             measured_at,
             sum_active_power,
             cos_phi,
