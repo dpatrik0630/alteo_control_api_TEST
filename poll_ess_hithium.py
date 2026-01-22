@@ -7,7 +7,7 @@ from pyModbusTCP.client import ModbusClient
 from db import get_db_connection
 from breaker import should_skip, on_failure, on_success
 
-TARGET_PERIOD = 2.0
+TARGET_PERIOD = 1.0
 
 print("[ESS] poll_ess_hithium OPTIMIZED started")
 
