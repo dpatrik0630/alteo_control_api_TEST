@@ -9,37 +9,18 @@ from breaker import should_skip, on_failure, on_success
 
 TARGET_PERIOD = 2.0
 
-print("[ESS] poll_ess_hithium started")
+print("[ESS] poll_ess_hithium OPTIMIZED started")
 
 
-# ---------- Modbus helpers ----------
-
-def read_uint16(client, addr):
-    regs = client.read_input_registers(addr, 1)
-    if not regs:
-        raise Exception(f"Modbus read failed at {addr}")
-    return regs[0]
-
-
-def read_int16(client, addr):
-    regs = client.read_input_registers(addr, 1)
-    if not regs:
-        raise Exception(f"Modbus read failed at {addr}")
-    val = regs[0]
-    return val - 0x10000 if val & 0x8000 else val
-
-
-def read_float32(client, addr):
-    regs = client.read_input_registers(addr, 2)
-    if not regs or len(regs) < 2:
-        raise Exception(f"Modbus float read failed at {addr}")
-    raw = (regs[0] << 16) | regs[1]
-    return struct.unpack(">f", raw.to_bytes(4, "big"))[0]
-
+# ---------- HELPERS ----------
 
 def avg(values):
-    vals = [v for v in values if v is not None]
-    return sum(vals) / len(vals) if vals else None
+    return sum(values) / len(values) if values else None
+
+
+def regs_to_float32(regs):
+    raw = (regs[0] << 16) | regs[1]
+    return struct.unpack(">f", raw.to_bytes(4, "big"))[0]
 
 
 def calculate_capacity(total_kwh, soc, min_soc=0, max_soc=100):
@@ -49,69 +30,97 @@ def calculate_capacity(total_kwh, soc, min_soc=0, max_soc=100):
     return max(charge, 0), max(discharge, 0)
 
 
-# ---------- SYNC ESS POLL (VÁLTOZATLAN LOGIKA) ----------
+# ---------- SYNC ESS POLL ----------
 
 def poll_ess_unit(ess, cur):
-    print(f"[ESS] Polling ESS plant_id={ess['plant_id']} ip={ess['ip_address']}:{ess['port']}")
+    plant_id = ess["plant_id"]
+    print(f"[ESS] Polling plant_id={plant_id}")
 
     client = ModbusClient(
         host=ess["ip_address"],
         port=ess["port"],
         auto_open=True,
-        timeout=3
+        timeout=1.0
     )
 
     if not client.open():
         raise Exception("Modbus connection failed")
 
-    soc = read_uint16(client, 1) / 10.0
-    total_capacity = read_float32(client, 2)
+    try:
+        # --- SOC ---
+        soc_raw = client.read_input_registers(1, 1)
+        if not soc_raw:
+            raise Exception("SOC read failed")
+        soc = soc_raw[0] / 10.0
 
-    batt_avg = avg([read_int16(client, 100 + i) / 10.0 for i in range(5)])
-    batt_min = avg([read_int16(client, 200 + i) / 10.0 for i in range(5)])
-    batt_max = avg([read_int16(client, 300 + i) / 10.0 for i in range(5)])
+        # --- TOTAL CAPACITY (float32) ---
+        cap_regs = client.read_input_registers(2, 2)
+        if not cap_regs:
+            raise Exception("Capacity read failed")
+        total_capacity = regs_to_float32(cap_regs)
 
-    cont_avg = avg([read_int16(client, 400 + i) / 10.0 for i in range(5)])
-    cont_min = min([read_int16(client, 400 + i) / 10.0 for i in range(5)])
-    cont_max = max([read_int16(client, 400 + i) / 10.0 for i in range(5)])
+        # --- BATTERY TEMPERATURES ---
+        batt_avg_vals = client.read_input_registers(100, 5)
+        batt_min_vals = client.read_input_registers(200, 5)
+        batt_max_vals = client.read_input_registers(300, 5)
 
-    charge_kwh, discharge_kwh = calculate_capacity(total_capacity, soc)
+        if not batt_avg_vals or not batt_min_vals or not batt_max_vals:
+            raise Exception("Battery temp read failed")
 
-    now = datetime.now(timezone.utc)
+        batt_avg = avg([v / 10.0 for v in batt_avg_vals])
+        batt_min = avg([v / 10.0 for v in batt_min_vals])
+        batt_max = avg([v / 10.0 for v in batt_max_vals])
 
-    cur.execute(
-        """
-        INSERT INTO ess_data_term1 (
-            plant_id,
-            measured_at,
-            avg_batt_temp,
-            min_batt_temp,
-            max_batt_temp,
-            avg_container_temp,
-            min_container_temp,
-            max_container_temp,
-            available_capacity_charge,
-            available_capacity_discharge,
-            average_current_soc
+        # --- CONTAINER TEMPERATURES ---
+        cont_vals = client.read_input_registers(400, 5)
+        if not cont_vals:
+            raise Exception("Container temp read failed")
+
+        cont_vals = [v / 10.0 for v in cont_vals]
+        cont_avg = avg(cont_vals)
+        cont_min = min(cont_vals)
+        cont_max = max(cont_vals)
+
+        # --- CAPACITY CALC ---
+        charge_kwh, discharge_kwh = calculate_capacity(total_capacity, soc)
+
+        now = datetime.now(timezone.utc)
+
+        # --- DB INSERT ---
+        cur.execute(
+            """
+            INSERT INTO ess_data_term1 (
+                plant_id,
+                measured_at,
+                avg_batt_temp,
+                min_batt_temp,
+                max_batt_temp,
+                avg_container_temp,
+                min_container_temp,
+                max_container_temp,
+                available_capacity_charge,
+                available_capacity_discharge,
+                average_current_soc
+            )
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                plant_id,
+                now,
+                batt_avg,
+                batt_min,
+                batt_max,
+                cont_avg,
+                cont_min,
+                cont_max,
+                charge_kwh,
+                discharge_kwh,
+                soc
+            )
         )
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        """,
-        (
-            ess["plant_id"],
-            now,
-            batt_avg,
-            batt_min,
-            batt_max,
-            cont_avg,
-            cont_min,
-            cont_max,
-            charge_kwh,
-            discharge_kwh,
-            soc
-        )
-    )
 
-    client.close()
+    finally:
+        client.close()
 
 
 # ---------- ASYNC WRAPPER ----------
