@@ -1,7 +1,9 @@
 import time
+import json
 import struct
 import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
 
 from pyModbusTCP.client import ModbusClient
 from db import get_db_connection
@@ -9,18 +11,36 @@ from breaker import should_skip, on_failure, on_success
 
 TARGET_PERIOD = 1.0
 
-print("[ESS] poll_ess_hithium OPTIMIZED started")
+print("[ESS] poll_ess_hithium JSON-driven started")
 
+# -------------------------------------------------
+# LOAD REGISTER MAP
+# -------------------------------------------------
 
-# ---------- HELPERS ----------
+HITHIUM_MAP = json.load(
+    open(Path(__file__).parent / "register_maps" / "ess" / "hithium.json")
+)["telemetry"]
+
+# -------------------------------------------------
+# HELPERS
+# -------------------------------------------------
 
 def avg(values):
     return sum(values) / len(values) if values else None
 
 
-def regs_to_float32(regs):
+def regs_to_float32_be(regs):
     raw = (regs[0] << 16) | regs[1]
     return struct.unpack(">f", raw.to_bytes(4, "big"))[0]
+
+
+def read_register(client, meta):
+    regs = client.read_input_registers(meta["address"], meta["quantity"])
+    if not regs:
+        raise Exception(f"Read failed @ {meta['address']}")
+    if meta["quantity"] == 2:
+        return regs_to_float32_be(regs)
+    return regs[0] / meta["gain"]
 
 
 def calculate_capacity(total_kwh, soc, min_soc=0, max_soc=100):
@@ -29,8 +49,9 @@ def calculate_capacity(total_kwh, soc, min_soc=0, max_soc=100):
     discharge = current - total_kwh * min_soc / 100.0
     return max(charge, 0), max(discharge, 0)
 
-
-# ---------- SYNC ESS POLL ----------
+# -------------------------------------------------
+# SYNC ESS POLL
+# -------------------------------------------------
 
 def poll_ess_unit(ess, cur):
     plant_id = ess["plant_id"]
@@ -47,46 +68,35 @@ def poll_ess_unit(ess, cur):
         raise Exception("Modbus connection failed")
 
     try:
-        # --- SOC ---
-        soc_raw = client.read_input_registers(1, 1)
-        if not soc_raw:
-            raise Exception("SOC read failed")
-        soc = soc_raw[0] / 10.0
+        soc = read_register(client, HITHIUM_MAP["averageCurrentSOC"])
+        total_capacity = read_register(client, HITHIUM_MAP["totalCapacity"])
 
-        # --- TOTAL CAPACITY (float32) ---
-        cap_regs = client.read_input_registers(2, 2)
-        if not cap_regs:
-            raise Exception("Capacity read failed")
-        total_capacity = regs_to_float32(cap_regs)
+        batt_avg = avg([
+            read_register(client, HITHIUM_MAP["averageBatterycellTemp"])
+        ])
 
-        # --- BATTERY TEMPERATURES ---
-        batt_avg_vals = client.read_input_registers(100, 5)
-        batt_min_vals = client.read_input_registers(200, 5)
-        batt_max_vals = client.read_input_registers(300, 5)
+        batt_min = avg([
+            read_register(client, HITHIUM_MAP["averageBatterycellTempMIN"])
+        ])
 
-        if not batt_avg_vals or not batt_min_vals or not batt_max_vals:
-            raise Exception("Battery temp read failed")
+        batt_max = avg([
+            read_register(client, HITHIUM_MAP["averageBatterycellTempMAX"])
+        ])
 
-        batt_avg = avg([v / 10.0 for v in batt_avg_vals])
-        batt_min = avg([v / 10.0 for v in batt_min_vals])
-        batt_max = avg([v / 10.0 for v in batt_max_vals])
-
-        # --- CONTAINER TEMPERATURES ---
-        cont_vals = client.read_input_registers(400, 5)
-        if not cont_vals:
-            raise Exception("Container temp read failed")
-
+        cont_vals = client.read_input_registers(
+            HITHIUM_MAP["averageContainerInsideTemp"]["address"],
+            HITHIUM_MAP["averageContainerInsideTemp"]["quantity"]
+        )
         cont_vals = [v / 10.0 for v in cont_vals]
+
         cont_avg = avg(cont_vals)
         cont_min = min(cont_vals)
         cont_max = max(cont_vals)
 
-        # --- CAPACITY CALC ---
         charge_kwh, discharge_kwh = calculate_capacity(total_capacity, soc)
 
         now = datetime.now(timezone.utc)
 
-        # --- DB INSERT ---
         cur.execute(
             """
             INSERT INTO ess_data_term1 (
@@ -122,8 +132,9 @@ def poll_ess_unit(ess, cur):
     finally:
         client.close()
 
-
-# ---------- ASYNC WRAPPER ----------
+# -------------------------------------------------
+# ASYNC LOOP
+# -------------------------------------------------
 
 async def poll_single_ess_async(ess, cur):
     plant_id = ess["plant_id"]
@@ -138,8 +149,6 @@ async def poll_single_ess_async(ess, cur):
         print(f"[ESS][ERROR] Plant {plant_id} → {e}")
         on_failure(plant_id)
 
-
-# ---------- ASYNC MAIN LOOP ----------
 
 async def main_async():
     conn = get_db_connection()
@@ -161,22 +170,14 @@ async def main_async():
 
     while True:
         cycle_start = time.monotonic()
+        await asyncio.gather(
+            *[poll_single_ess_async(ess, cur) for ess in ess_units]
+        )
 
-        tasks = [
-            poll_single_ess_async(ess, cur)
-            for ess in ess_units
-        ]
-
-        await asyncio.gather(*tasks)
-
-        elapsed = time.monotonic() - cycle_start
-        sleep_time = TARGET_PERIOD - elapsed
-
+        sleep_time = TARGET_PERIOD - (time.monotonic() - cycle_start)
         if sleep_time > 0:
             await asyncio.sleep(sleep_time)
 
-
-# ---------- ENTRYPOINT ----------
 
 if __name__ == "__main__":
     asyncio.run(main_async())

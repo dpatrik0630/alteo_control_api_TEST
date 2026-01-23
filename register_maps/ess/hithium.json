@@ -1,65 +1,76 @@
 {
-  "averageCurrentSOC": {
-    "address": 1,
-    "quantity": 1,
-    "gain": 10,
-    "signed": false,
-    "fc": 3
-  },
+  "telemetry":{
+    "averageCurrentSOC": {
+      "address": 1,
+      "quantity": 1,
+      "gain": 10,
+      "signed": false,
+      "fc": 3
+    },
 
-  "totalCapacity": {
-    "address": 2,
-    "quantity": 2,
-    "gain": 1,
-    "signed": false,
-    "fc": 3
-  },
+    "totalCapacity": {
+      "address": 2,
+      "quantity": 2,
+      "gain": 1,
+      "signed": false,
+      "fc": 3
+    },
 
-  "allowedMinSOC": {
-    "address": 50,
-    "quantity": 1,
-    "gain": 10,
-    "signed": false,
-    "fc": 3
-  },
+    "allowedMinSOC": {
+      "address": 50,
+      "quantity": 1,
+      "gain": 10,
+      "signed": false,
+      "fc": 3
+    },
 
-  "allowedMaxSOC": {
-    "address": 51,
-    "quantity": 1,
-    "gain": 10,
-    "signed": false,
-    "fc": 3
-  },
+    "allowedMaxSOC": {
+      "address": 51,
+      "quantity": 1,
+      "gain": 10,
+      "signed": false,
+      "fc": 3
+    },
 
-  "averageBatterycellTemp": {
-    "address": 100,
-    "quantity": 5,
-    "gain": 10,
-    "signed": true,
-    "fc": 3
-  },
+    "averageBatterycellTemp": {
+      "address": 100,
+      "quantity": 5,
+      "gain": 10,
+      "signed": true,
+      "fc": 3
+    },
 
-  "averageBatterycellTempMIN": {
-    "address": 200,
-    "quantity": 5,
-    "gain": 10,
-    "signed": true,
-    "fc": 3
-  },
+    "averageBatterycellTempMIN": {
+      "address": 200,
+      "quantity": 5,
+      "gain": 10,
+      "signed": true,
+      "fc": 3
+    },
 
-  "averageBatterycellTempMAX": {
-    "address": 300,
-    "quantity": 5,
-    "gain": 10,
-    "signed": true,
-    "fc": 3
-  },
+    "averageBatterycellTempMAX": {
+      "address": 300,
+      "quantity": 5,
+      "gain": 10,
+      "signed": true,
+      "fc": 3
+    },
 
-  "averageContainerInsideTemp": {
-    "address": 400,
-    "quantity": 5,
-    "gain": 10,
-    "signed": true,
-    "fc": 3
+    "averageContainerInsideTemp": {
+      "address": 400,
+      "quantity": 5,
+      "gain": 10,
+      "signed": true,
+      "fc": 3
+    }
+  },
+  "controls": {
+    "activePowerSetpoint": {
+      "address": 1000,
+      "quantity": 2,
+      "datatype": "float32",
+      "endian": "big",
+      "unit": "kW"
+    }
   }
 }
