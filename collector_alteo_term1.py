@@ -139,9 +139,9 @@ async def collect_plant_data(plant):
 
         # --- cosφ validálás (-1 és 1 közé kell essen) ---
         cos_phi = logger_data.get("cos_phi")
-        if cos_phi is not None and not (-1 <= cos_phi <= 1):
-            print(f"[WARN] Plant {pid} → Invalid cosφ value {cos_phi:.4f}, setting to None")
-            cos_phi = None
+        #if cos_phi is not None and not (-1 <= cos_phi <= 1):
+        #    print(f"[WARN] Plant {pid} → Invalid cosφ value {cos_phi:.4f}, setting to None")
+        #    cos_phi = None
 
         pod_id = plant.get("pod_id")
 
