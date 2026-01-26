@@ -185,7 +185,7 @@ async def collect_plant_data(plant):
             "pod_id": pod_id,
             "timestamp": datetime.now(timezone.utc).replace(microsecond=0),
             "sum_active_power": logger_data.get("sum_active_power"),
-            "cos_phi": logger_data.get("phi_deg"),
+            "cos_phi": phi_deg,
             "available_power_min": 0.0,
             "available_power_max": abs(logger_data["sum_active_power"]) if logger_data.get("sum_active_power") else None,
             "reference_power": abs(logger_data["sum_active_power"]) if logger_data.get("sum_active_power") else None,
