@@ -96,7 +96,7 @@ async def store_term1_data(records):
         """, [
             (
                 r["plant_id"], r["pod_id"], r["timestamp"],
-                r["sum_active_power"], r["phi_deg"],
+                r["sum_active_power"], r["cos_phi"],
                 r["available_power_min"], r["available_power_max"],
                 r["reference_power"], r["ghi"], r["panel_temp"]
             ) for r in records
