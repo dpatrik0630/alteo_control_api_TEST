@@ -25,16 +25,24 @@ def load_register_map(device_type: str, manufacturer: str, model: str = None):
 
 
 def convert_registers_to_scaled_value(registers, gain, signed=True):
-    """Konvertálja a Modbus regisztereket skálázott float értékre"""
     if not registers:
         return None
-    if len(registers) == 2:
-        raw = (registers[0] << 16) | registers[1]
-    else:
+
+    if len(registers) == 1:
         raw = registers[0]
-    if signed and raw & 0x80000000:
-        raw = -((~raw & 0xFFFFFFFF) + 1)
+        if signed and raw & 0x8000:
+            raw -= 0x10000
+
+    elif len(registers) == 2:
+        raw = (registers[0] << 16) | registers[1]
+        if signed and raw & 0x80000000:
+            raw -= 0x100000000
+
+    else:
+        return None
+
     return raw / gain
+
 
 
 async def get_plants_and_ess():
@@ -139,9 +147,9 @@ async def collect_plant_data(plant):
 
         # --- cosφ validálás (-1 és 1 közé kell essen) ---
         cos_phi = logger_data.get("cos_phi")
-        #if cos_phi is not None and not (-1 <= cos_phi <= 1):
-        #    print(f"[WARN] Plant {pid} → Invalid cosφ value {cos_phi:.4f}, setting to None")
-        #    cos_phi = None
+        if cos_phi is not None and not (-1 <= cos_phi <= 1):
+            print(f"[WARN] Plant {pid} → Invalid cosφ value {cos_phi:.4f}, setting to None")
+            cos_phi = None
 
         pod_id = plant.get("pod_id")
 
