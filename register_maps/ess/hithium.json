@@ -16,22 +16,6 @@
       "fc": 3
     },
 
-    "allowedMinSOC": {
-      "address": 50,
-      "quantity": 1,
-      "gain": 10,
-      "signed": false,
-      "fc": 3
-    },
-
-    "allowedMaxSOC": {
-      "address": 51,
-      "quantity": 1,
-      "gain": 10,
-      "signed": false,
-      "fc": 3
-    },
-
     "averageBatterycellTemp": {
       "address": 100,
       "quantity": 5,

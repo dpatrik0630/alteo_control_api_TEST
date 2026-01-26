@@ -110,9 +110,11 @@ def poll_ess_unit(ess, cur):
                 max_container_temp,
                 available_capacity_charge,
                 available_capacity_discharge,
-                average_current_soc
+                average_current_soc,
+                allowed_min_soc,
+                allowed_max_soc
             )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             (
                 plant_id,
@@ -125,7 +127,9 @@ def poll_ess_unit(ess, cur):
                 cont_max,
                 charge_kwh,
                 discharge_kwh,
-                soc
+                soc,
+                0,
+                100
             )
         )
 
