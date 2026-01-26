@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from pyModbusTCP.client import ModbusClient
@@ -95,7 +96,7 @@ async def store_term1_data(records):
         """, [
             (
                 r["plant_id"], r["pod_id"], r["timestamp"],
-                r["sum_active_power"], r["cos_phi"],
+                r["sum_active_power"], r["phi_deg"],
                 r["available_power_min"], r["available_power_max"],
                 r["reference_power"], r["ghi"], r["panel_temp"]
             ) for r in records
@@ -105,6 +106,27 @@ async def store_term1_data(records):
         conn.close()
 
     await loop.run_in_executor(None, _insert)
+
+def cosphi_to_phi_deg(cos_phi: float, manufacturer: str):
+    """
+    cosφ → φ fokban
+    Huawei: előjel a cosφ-ból
+    Fronius: mindig + (induktív)
+    """
+    if cos_phi is None:
+        return None
+
+    # numerikus védelem
+    cos_phi = max(-1.0, min(1.0, cos_phi))
+
+    # abs értékből számoljuk a szöget
+    phi = math.degrees(math.acos(abs(cos_phi)))
+
+    if manufacturer.lower() == "huawei":
+        return phi if cos_phi >= 0 else -phi
+    else:
+        # fronius → induktívnak tekintjük
+        return phi
 
 
 def read_cos_phi(client, manufacturer, cosphi_meta):
@@ -147,9 +169,14 @@ async def collect_plant_data(plant):
 
         # --- cosφ validálás (-1 és 1 közé kell essen) ---
         cos_phi = logger_data.get("cos_phi")
-        if cos_phi is not None and not (-1 <= cos_phi <= 1):
-            print(f"[WARN] Plant {pid} → Invalid cosφ value {cos_phi:.4f}, setting to None")
-            cos_phi = None
+        #if cos_phi is not None and not (-1 <= cos_phi <= 1):
+        #    print(f"[WARN] Plant {pid} → Invalid cosφ value {cos_phi:.4f}, setting to None")
+        #    cos_phi = None
+        phi_deg = cosphi_to_phi_deg(
+            cos_phi,
+            plant["logger_manufacturer"]
+)
+
 
         pod_id = plant.get("pod_id")
 
