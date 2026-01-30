@@ -1,4 +1,17 @@
 {
-  "sum_active_power": { "address": 32278, "quantity": 2, "gain": 1000, "signed": true },
-  "cos_phi": { "address": 32284, "quantity": 1, "gain": 1000, "signed": true }
+  "manufacturer": "Huawei",
+  "device": "SmartLogger",
+  "controls": {
+    "activePowerAdjustment": {
+      "description": "Total active power adjustment of all inverters connected to SmartLogger",
+      "address": 40420,
+      "quantity": 2,
+      "datatype": "int32",
+      "signed": true,
+      "unit": "kW",
+      "gain": 10,
+      "rw": "RW",
+      "notes": "Negative value indicates power supplied from grid if ESS is deployed"
+    }
+  }
 }

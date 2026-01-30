@@ -23,13 +23,13 @@ MAX_PARALLEL_POLLS = 10
 # LOAD REGISTER MAP
 # =========================================================
 
-def load_register_map(device_type: str, manufacturer: str, model: str = None):
+def load_register_map(device_type: str, manufacturer: str):
     base = Path(__file__).parent / "register_maps"
 
-    if device_type == "logger":
-        path = base / "logger" / f"{manufacturer.lower()}.json"
+    if device_type == "PCC_meter":
+        path = base / "PCC_meter" / f"{manufacturer.lower()}.json"
     else:
-        raise ValueError("Unsupported device type")
+        raise ValueError(f"Unsupported device type: {device_type}")
 
     if not path.exists():
         raise FileNotFoundError(f"Missing register map: {path}")
@@ -264,7 +264,7 @@ async def main():
             "port": r[3],
             "meter_slave_id": r[4],
             "manufacturer": r[5],
-            "register_map": load_register_map("logger", r[5]),
+            "register_map": load_register_map("PCC_meter", r[5]),
         })
 
     print(f"[ALTEO_TERM1] Started for {len(plants)} plants")

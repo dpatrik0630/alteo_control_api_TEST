@@ -1,4 +1,19 @@
 {
-  "sum_active_power": { "address": 499, "quantity": 2, "gain": 1000, "signed": true },
-  "cos_phi": { "address": 40091, "quantity": 2, "gain": 1000, "signed": true }
+  "manufacturer": "Fronius",
+  "device": "Datamanager",
+  "controls": {
+    "activePowerLimitPercent": {
+      "description": "Active power limitation of total PV output as percentage of rated power",
+      "address": 40233,
+      "quantity": 1,
+      "datatype": "uint16",
+      "unit": "%",
+      "scale_factor_register": 40251,
+      "enable_register": {
+        "address": 40237,
+        "enable_value": 1
+      },
+      "rw": "RW"
+    }
+  }
 }

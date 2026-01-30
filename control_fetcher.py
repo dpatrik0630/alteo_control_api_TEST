@@ -9,20 +9,21 @@ API_URL = "https://apim-ap-test.azure-api.net/plant-control/api/setpoint"
 API_KEY = os.getenv("ALTEO_API_KEY")
 CHECK_INTERVAL = 30  # mp-ként próbálja újra, ha nem volt frissítés
 
-def update_heartbeat_inbox(pod, heartbeat, sum_setpoint, scheduled_reference):
+def update_heartbeat_inbox(pod, heartbeat, sum_setpoint, scheduled_reference, usesetpoint):
     """Frissíti vagy létrehozza a heartbeat rekordot"""
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO alteo_controls_inbox (pod, heartbeat, sum_setpoint, scheduled_reference)
-        VALUES (%s, %s, %s, %s)
+        INSERT INTO alteo_controls_inbox (pod, heartbeat, sum_setpoint, scheduled_reference, usesetpoint)
+        VALUES (%s, %s, %s, %s, %s)
         ON CONFLICT (pod)
         DO UPDATE SET
           heartbeat = EXCLUDED.heartbeat,
           sum_setpoint = EXCLUDED.sum_setpoint,
           scheduled_reference = EXCLUDED.scheduled_reference,
+          usesetpoint = EXCLUDED.usesetpoint,
           received_at = NOW();
-    """, (pod, heartbeat, sum_setpoint, scheduled_reference))
+    """, (pod, heartbeat, sum_setpoint, scheduled_reference, usesetpoint))
     conn.commit()
     cur.close()
     conn.close()
@@ -54,7 +55,8 @@ async def fetch_initial_heartbeat():
             hb = ctrl.get("heartbeat")
             sp = ctrl.get("sumSetPoint")
             sr = ctrl.get("scheduledReference")
-            update_heartbeat_inbox(pod, hb, sp, sr)
+            usp = ctrl.get("useSetPoint", 0)
+            update_heartbeat_inbox(pod, hb, sp, sr, usp)
             print(f"[CTRL_FETCHER] Initial heartbeat stored for {pod}: {hb}")
 
     except Exception as e:

@@ -1,69 +1,87 @@
 import time
-import psycopg2
-import select
-import struct
-from datetime import datetime, timezone
-
-from pyModbusTCP.client import ModbusClient
+import threading
+import json
+from pathlib import Path
 
 from db import get_db_connection
+from breaker import should_skip, on_failure, on_success
+from pyModbusTCP.client import ModbusClient
 
 
-# =========================================================
+# ==============================
 # CONFIG
-# =========================================================
+# ==============================
 
-ESS_POWER_SETPOINT_REG = 600
-ESS_SCALE = 10
+CONTROL_INTERVAL = 0.3
+DEADBAND_KW = 5.0
+KP = 0.5
+MIN_WRITE_INTERVAL = 0.8
 
-DEADBAND_KW = 1.0
-MIN_WRITE_INTERVAL = 2.0
+BASE_DIR = Path(__file__).parent
 
-# =========================================================
-# HELPERS – DB
-# =========================================================
 
-def get_latest_unapplied_control(cur, pod):
+# ==============================
+# REGISTER MAP LOADER
+# ==============================
+
+def load_register_map(category: str, manufacturer: str):
+    path = BASE_DIR / "register_maps" / category / f"{manufacturer.lower()}.json"
+    if not path.exists():
+        raise FileNotFoundError(path)
+    with open(path) as f:
+        return json.load(f)
+
+
+LOGGER_MAPS = {
+    "huawei": load_register_map("logger", "huawei"),
+    "fronius": load_register_map("logger", "fronius"),
+}
+
+
+# ==============================
+# POD STATE
+# ==============================
+
+class PodControlState:
+    def __init__(self, pod_id):
+        self.pod_id = pod_id
+        self.last_cmd_kw = 0.0
+        self.last_write_ts = 0.0
+
+
+# ==============================
+# DB HELPERS
+# ==============================
+
+def get_latest_target_kw(cur, pod_id):
     cur.execute("""
-        SELECT id, sum_setpoint
+        SELECT sum_setpoint
         FROM alteo_control_inbox
         WHERE pod = %s
-          AND applied = false
         ORDER BY received_at DESC
         LIMIT 1
-    """, (pod,))
-    return cur.fetchone()
+    """, (pod_id,))
+    row = cur.fetchone()
+    return row[0] if row else None
 
 
-def mark_control_applied(cur, control_id, applied_kw, note=None):
-    cur.execute("""
-        UPDATE alteo_control_inbox
-        SET applied = true,
-            applied_at = NOW(),
-            applied_value = %s,
-            note = %s
-        WHERE id = %s
-    """, (applied_kw, note, control_id))
-
-
-def get_latest_plant_state(cur, pod):
+def get_latest_pcc_kw(cur, pod_id):
     cur.execute("""
         SELECT sum_active_power
         FROM plant_data_term1
         WHERE pod_id = %s
         ORDER BY measured_at DESC
         LIMIT 1
-    """, (pod,))
+    """, (pod_id,))
     row = cur.fetchone()
     return row[0] if row else None
 
 
-def get_latest_ess_state(cur, pod):
+def get_latest_ess_state(cur, pod_id):
     cur.execute("""
         SELECT
             e.ip_address,
             e.port,
-            d.average_current_soc,
             d.available_capacity_charge,
             d.available_capacity_discharge
         FROM ess_data_term1 d
@@ -72,154 +90,201 @@ def get_latest_ess_state(cur, pod):
         WHERE p.pod_id = %s
         ORDER BY d.measured_at DESC
         LIMIT 1
-    """, (pod,))
+    """, (pod_id,))
     return cur.fetchone()
 
 
-# =========================================================
-# HELPERS – CONTROL LOGIC
-# =========================================================
-
-def calculate_ess_setpoint(target_kw, current_kw, soc):
-    """
-    ESS-first logika:
-    target = ALTEO sumSetPoint
-    current = aktuális PV + ESS állapot
-    """
-    if soc is None:
-        raise Exception("SOC unknown")
-
-    delta = target_kw - current_kw
-    return delta
+def get_logger_info(cur, pod_id):
+    cur.execute("""
+        SELECT
+            logger_manufacturer,
+            logger_ip,
+            logger_port,
+            logger_slave_id,
+            pv_rated_power_kw
+        FROM plants
+        WHERE pod_id = %s
+        LIMIT 1
+    """, (pod_id,))
+    return cur.fetchone()
 
 
-def within_deadband(new_kw, last_kw):
-    if last_kw is None:
-        return False
-    return abs(new_kw - last_kw) < DEADBAND_KW
+# ==============================
+# MODBUS WRITES
+# ==============================
 
-
-# =========================================================
-# HELPERS – MODBUS
-# =========================================================
-
-def write_ess_power(ip, port, kw):
-    raw = int(kw * ESS_SCALE)
-
-    # signed int32
-    if raw < 0:
-        raw = (1 << 32) + raw
-
-    regs = [(raw >> 16) & 0xFFFF, raw & 0xFFFF]
+def write_ess_setpoint(ip, port, kw):
+    # Hithium: float32 big endian, kW
+    import struct
+    payload = struct.pack(">f", float(kw))
+    regs = struct.unpack(">HH", payload)
 
     client = ModbusClient(
         host=ip,
         port=port,
         auto_open=True,
         auto_close=True,
-        timeout=1.5
+        timeout=1.0
     )
 
-    ok = client.write_multiple_registers(ESS_POWER_SETPOINT_REG, regs)
-    if not ok:
-        raise Exception("Modbus write failed")
+    if not client.write_multiple_registers(1000, list(regs)):
+        raise Exception("ESS Modbus write failed")
 
 
-# =========================================================
-# MAIN CONTROL HANDLER
-# =========================================================
+def apply_huawei_pv_limit(logger, target_kw):
+    meta = LOGGER_MAPS["huawei"]["controls"]["activePowerAdjustment"]
 
-def handle_control_for_pod(pod):
-    conn = get_db_connection()
-    conn.autocommit = False
-    cur = conn.cursor()
+    raw = int(target_kw * meta["gain"])
+    if meta.get("signed") and raw < 0:
+        raw = (1 << 32) + raw
 
-    try:
-        # --- Advisory lock (POD szint) ---
-        cur.execute("SELECT pg_try_advisory_lock(hashtext(%s))", (pod,))
-        locked = cur.fetchone()[0]
-        if not locked:
-            return
+    regs = [(raw >> 16) & 0xFFFF, raw & 0xFFFF]
 
-        ctrl = get_latest_unapplied_control(cur, pod)
-        if not ctrl:
-            return
-
-        control_id, target_kw = ctrl
-
-        current_kw = get_latest_plant_state(cur, pod)
-        ess = get_latest_ess_state(cur, pod)
-
-        if current_kw is None or ess is None:
-            mark_control_applied(cur, control_id, None, "Missing state data")
-            conn.commit()
-            return
-
-        ip, port, soc, cap_ch, cap_dis = ess
-
-        ess_kw = calculate_ess_setpoint(
-            target_kw=target_kw,
-            current_kw=current_kw,
-            soc=soc
-        )
-
-        # --- SOC védelem ---
-        if ess_kw > 0 and cap_dis <= 0:
-            mark_control_applied(cur, control_id, 0, "No discharge capacity")
-            conn.commit()
-            return
-
-        if ess_kw < 0 and cap_ch <= 0:
-            mark_control_applied(cur, control_id, 0, "No charge capacity")
-            conn.commit()
-            return
-
-        # --- Modbus write ---
-        write_ess_power(ip, port, ess_kw)
-
-        mark_control_applied(cur, control_id, ess_kw)
-        conn.commit()
-
-        print(f"[CTRL] POD {pod} → ESS setpoint {ess_kw:.1f} kW")
-
-    except Exception as e:
-        conn.rollback()
-        print(f"[CTRL][ERROR] POD {pod}: {e}")
-
-    finally:
-        cur.execute("SELECT pg_advisory_unlock(hashtext(%s))", (pod,))
-        cur.close()
-        conn.close()
-
-
-# =========================================================
-# LISTEN / NOTIFY LOOP
-# =========================================================
-
-def main():
-    conn = psycopg2.connect(
-        dbname="...",
-        user="...",
-        password="...",
-        host="...",
-        port="..."
+    client = ModbusClient(
+        host=logger["ip"],
+        port=logger["port"],
+        unit_id=logger["slave"],
+        auto_open=True,
+        auto_close=True
     )
-    conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
 
-    cur = conn.cursor()
-    cur.execute("LISTEN alteo_control;")
+    client.write_multiple_registers(meta["address"], regs)
 
-    print("[CTRL_EXEC] Waiting for ALTEO controls...")
+
+def apply_fronius_pv_limit(logger, target_kw):
+    meta = LOGGER_MAPS["fronius"]["controls"]["activePowerLimitPercent"]
+
+    percent = max(
+        0,
+        min(100, (target_kw / logger["rated_kw"]) * 100)
+    )
+
+    client = ModbusClient(
+        host=logger["ip"],
+        port=logger["port"],
+        unit_id=logger["slave"],
+        auto_open=True,
+        auto_close=True
+    )
+
+    ena = meta["enable_register"]
+    client.write_single_register(ena["address"], ena["enable_value"])
+    client.write_single_register(meta["address"], int(percent))
+
+
+# ==============================
+# CONTROL LOOP
+# ==============================
+
+def control_loop(pod_id):
+    state = PodControlState(pod_id)
 
     while True:
-        if select.select([conn], [], [], 5) == ([], [], []):
+        start = time.monotonic()
+
+        if should_skip(pod_id):
+            time.sleep(1)
             continue
 
-        conn.poll()
-        while conn.notifies:
-            notify = conn.notifies.pop(0)
-            pod = notify.payload
-            handle_control_for_pod(pod)
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        try:
+            target_kw = get_latest_target_kw(cur, pod_id)
+            pcc_kw = get_latest_pcc_kw(cur, pod_id)
+            ess = get_latest_ess_state(cur, pod_id)
+            logger_row = get_logger_info(cur, pod_id)
+
+            if None in (target_kw, pcc_kw, ess, logger_row):
+                time.sleep(1)
+                continue
+
+            ip, port, cap_ch, cap_dis = ess
+            manufacturer, lip, lport, lslave, pv_rated = logger_row
+
+            error = target_kw - pcc_kw
+
+            # ---- DEAD BAND ----
+            if abs(error) < DEADBAND_KW:
+                continue
+
+            now = time.monotonic()
+
+            # ================= ESS FIRST =================
+            if (error > 0 and cap_dis > 0) or (error < 0 and cap_ch > 0):
+                new_cmd = state.last_cmd_kw + KP * error
+
+                if now - state.last_write_ts < MIN_WRITE_INTERVAL:
+                    continue
+
+                write_ess_setpoint(ip, port, new_cmd)
+
+                state.last_cmd_kw = new_cmd
+                state.last_write_ts = now
+
+                print(f"[CTRL][ESS] POD {pod_id} → {new_cmd:.1f} kW")
+
+            # ================= PV FALLBACK =================
+            elif error < 0 and cap_ch <= 0:
+                logger = {
+                    "ip": lip,
+                    "port": lport,
+                    "slave": lslave,
+                    "rated_kw": pv_rated
+                }
+
+                if manufacturer.lower() == "huawei":
+                    apply_huawei_pv_limit(logger, target_kw)
+                    print(f"[CTRL][PV][Huawei] POD {pod_id} limit {target_kw:.1f} kW")
+
+                elif manufacturer.lower() == "fronius":
+                    apply_fronius_pv_limit(logger, target_kw)
+                    print(f"[CTRL][PV][Fronius] POD {pod_id} limit {target_kw:.1f} kW")
+
+            on_success(pod_id)
+
+        except Exception as e:
+            print(f"[CTRL][ERROR] POD {pod_id}: {e}")
+            on_failure(pod_id)
+
+        finally:
+            cur.close()
+            conn.close()
+
+        elapsed = time.monotonic() - start
+        time.sleep(max(0, CONTROL_INTERVAL - elapsed))
+
+
+# ==============================
+# MAIN
+# ==============================
+
+def main():
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT DISTINCT pod_id
+        FROM plants
+        WHERE alteo_api_control = TRUE
+    """)
+    pods = [r[0] for r in cur.fetchall()]
+
+    cur.close()
+    conn.close()
+
+    print(f"[CTRL_EXEC] Starting control loops for {len(pods)} PODs")
+
+    for pod in pods:
+        t = threading.Thread(
+            target=control_loop,
+            args=(pod,),
+            daemon=True
+        )
+        t.start()
+
+    while True:
+        time.sleep(10)
 
 
 if __name__ == "__main__":
