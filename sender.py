@@ -104,8 +104,8 @@ def get_24h_avg_min_max(plant_id, column):
 
     return None, None, None
 
-def update_latest_ess_24h_stats(
-    plant_id,
+def update_ess_24h_stats_by_id(
+    ess_row_id,
     batt_avg,
     batt_min,
     batt_max,
@@ -126,13 +126,7 @@ def update_latest_ess_24h_stats(
             container_temp_24h_avg = %s,
             container_temp_24h_min = %s,
             container_temp_24h_max = %s
-        WHERE id = (
-            SELECT id
-            FROM ess_data_term1
-            WHERE plant_id = %s
-            ORDER BY measured_at DESC
-            LIMIT 1
-        )
+        WHERE id = %s
         """,
         (
             batt_avg,
@@ -141,14 +135,13 @@ def update_latest_ess_24h_stats(
             cont_avg,
             cont_min,
             cont_max,
-            plant_id
+            ess_row_id
         )
     )
 
     conn.commit()
     cur.close()
     conn.close()
-
 
 
 def get_last_heartbeat(pod):
@@ -219,7 +212,10 @@ def update_heartbeat_inbox(pod, heartbeat, sum_setpoint, scheduled_reference):
 # Payload builder
 # -------------------------------------------------
 
-def build_payload(measurement, ess_data, heartbeat_mirrored, env_temp=None):
+def build_payload(measurement, ess_data, heartbeat_mirrored,
+                  env_temp,
+                  batt_avg_24h, batt_min_24h, batt_max_24h,
+                  cont_avg_24h, cont_min_24h, cont_max_24h):
     pod = measurement["pod_id"]
     measured_at = (
         measurement["measured_at"]
@@ -269,17 +265,6 @@ def build_payload(measurement, ess_data, heartbeat_mirrored, env_temp=None):
 
     # -------- ESS EXTENSION --------
     if ess_data:
-        # 24h battery cell temp stats (from averages)
-        batt_avg_24h, batt_min_24h, batt_max_24h = get_24h_avg_min_max(
-            measurement["plant_id"],
-            "avg_batt_temp"
-        )
-
-        # 24h container inside temp stats (from averages)
-        cont_avg_24h, cont_min_24h, cont_max_24h = get_24h_avg_min_max(
-            measurement["plant_id"],
-            "avg_container_temp"
-        )
         values.extend([
         {"measurement": "availableCapacityCharge", "measuredAt": measured_at, "value": ess_data["available_capacity_charge"], "quality": 1},
         {"measurement": "availableCapacityDischarge", "measuredAt": measured_at, "value": ess_data["available_capacity_discharge"], "quality": 1},
@@ -323,14 +308,9 @@ async def send_once(measurement):
     ess_data = get_latest_ess_data(measurement["plant_id"])
     env_temp = get_latest_environment_temp(measurement["plant_id"])
 
-    payload = build_payload(
-        measurement,
-        ess_data,
-        heartbeat,
-        env_temp
-    )
+    batt_avg_24h = batt_min_24h = batt_max_24h = None
+    cont_avg_24h = cont_min_24h = cont_max_24h = None
 
-# ---- STORE 24h ALTEO STATS INTO ess_data_term1 ----
     if ess_data:
         batt_avg_24h, batt_min_24h, batt_max_24h = get_24h_avg_min_max(
             measurement["plant_id"],
@@ -342,16 +322,26 @@ async def send_once(measurement):
             "avg_container_temp"
         )
 
-        if batt_avg_24h is not None:
-            update_latest_ess_24h_stats(
-                measurement["plant_id"],
-                batt_avg_24h,
-                batt_min_24h,
-                batt_max_24h,
-                cont_avg_24h,
-                cont_min_24h,
-                cont_max_24h
-            )
+    payload = build_payload(
+        measurement,
+        ess_data,
+        heartbeat,
+        env_temp
+    )
+
+# ---- STORE 24h ALTEO STATS INTO ess_data_term1 ----
+    if ess_data and batt_avg_24h is not None:
+        update_ess_24h_stats_by_id(
+            ess_data["id"],
+            batt_avg_24h,
+            batt_min_24h,
+            batt_max_24h,
+            cont_avg_24h,
+            cont_min_24h,
+            cont_max_24h
+        )
+
+
 
 
     headers = {
