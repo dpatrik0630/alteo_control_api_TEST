@@ -61,6 +61,27 @@ def get_latest_ess_data(plant_id):
     conn.close()
     return row
 
+def get_latest_environment_temp(plant_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT e.temperature
+        FROM plant_environment_sensors pes
+        JOIN environment_data_term1 e
+          ON e.sensor_id = pes.sensor_id
+        WHERE pes.plant_id = %s
+        ORDER BY e.measured_at DESC
+        LIMIT 1
+    """, (plant_id,))
+
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    return row[0] if row else None
+
+
 
 def get_last_heartbeat(pod):
     conn = get_db_connection()
@@ -130,7 +151,7 @@ def update_heartbeat_inbox(pod, heartbeat, sum_setpoint, scheduled_reference):
 # Payload builder
 # -------------------------------------------------
 
-def build_payload(measurement, ess_data, heartbeat_mirrored):
+def build_payload(measurement, ess_data, heartbeat_mirrored, env_temp=None):
     pod = measurement["pod_id"]
     measured_at = (
         measurement["measured_at"]
@@ -194,6 +215,14 @@ def build_payload(measurement, ess_data, heartbeat_mirrored):
             {"measurement": "allowedMaxSOC", "measuredAt": measured_at, "value": ess_data["allowed_max_soc"], "quality": 1},
         ])
 
+    if env_temp is not None:
+        values.append({
+            "measurement": "averageEnvironmentTemp",
+            "measuredAt": measured_at,
+            "value": env_temp,
+            "quality": 1
+        })   
+
     return [{"pod": pod, "values": values}]
 
 
@@ -210,7 +239,14 @@ async def send_once(measurement):
         return
 
     ess_data = get_latest_ess_data(measurement["plant_id"])
-    payload = build_payload(measurement, ess_data, heartbeat)
+    env_temp = get_latest_environment_temp(measurement["plant_id"])
+
+    payload = build_payload(
+        measurement,
+        ess_data,
+        heartbeat,
+        env_temp
+    )
 
     headers = {
         "Content-Type": "application/json",

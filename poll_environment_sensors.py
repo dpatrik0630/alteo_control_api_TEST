@@ -1,0 +1,90 @@
+import asyncio
+from datetime import datetime, timezone
+
+from pyModbusTCP.client import ModbusClient
+from db import get_db_connection
+
+POLL_INTERVAL = 30.0  # mp
+
+
+def poll_sensor_sync(sensor):
+    client = ModbusClient(
+        host=sensor["ip_address"],
+        port=sensor["port"],
+        unit_id=sensor["slave_id"],
+        auto_open=True,
+        auto_close=True,
+        timeout=1.0
+    )
+
+    regs = client.read_input_registers(0, 1)
+    if not regs:
+        raise Exception("No data from environment sensor")
+
+    return regs[0] / 10.0
+
+
+async def poll_once(sensor):
+    temp = await asyncio.to_thread(poll_sensor_sync, sensor)
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO environment_data_term1 (
+            sensor_id,
+            measured_at,
+            temperature
+        ) VALUES (%s,%s,%s)
+    """, (
+        sensor["id"],
+        datetime.now(timezone.utc).replace(microsecond=0),
+        temp
+    ))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    print(f"[ENV] Sensor {sensor['id']} → {temp:.1f} °C")
+
+
+async def main():
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            id,
+            ip_address,
+            port,
+            slave_id
+        FROM environment_sensors
+        WHERE active = TRUE
+    """)
+
+    sensors = [
+        {
+            "id": r[0],
+            "ip_address": r[1],
+            "port": r[2],
+            "slave_id": r[3],
+        }
+        for r in cur.fetchall()
+    ]
+
+    cur.close()
+    conn.close()
+
+    print(f"[ENV] Started polling {len(sensors)} environment sensors")
+
+    while True:
+        await asyncio.gather(
+            *[poll_once(s) for s in sensors],
+            return_exceptions=True
+        )
+        await asyncio.sleep(POLL_INTERVAL)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
