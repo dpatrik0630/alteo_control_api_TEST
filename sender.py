@@ -104,6 +104,52 @@ def get_24h_avg_min_max(plant_id, column):
 
     return None, None, None
 
+def update_latest_ess_24h_stats(
+    plant_id,
+    batt_avg,
+    batt_min,
+    batt_max,
+    cont_avg,
+    cont_min,
+    cont_max
+):
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE ess_data_term1
+        SET
+            batt_temp_24h_avg = %s,
+            batt_temp_24h_min = %s,
+            batt_temp_24h_max = %s,
+            container_temp_24h_avg = %s,
+            container_temp_24h_min = %s,
+            container_temp_24h_max = %s
+        WHERE id = (
+            SELECT id
+            FROM ess_data_term1
+            WHERE plant_id = %s
+            ORDER BY measured_at DESC
+            LIMIT 1
+        )
+        """,
+        (
+            batt_avg,
+            batt_min,
+            batt_max,
+            cont_avg,
+            cont_min,
+            cont_max,
+            plant_id
+        )
+    )
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
 
 def get_last_heartbeat(pod):
     conn = get_db_connection()
@@ -283,6 +329,30 @@ async def send_once(measurement):
         heartbeat,
         env_temp
     )
+
+# ---- STORE 24h ALTEO STATS INTO ess_data_term1 ----
+    if ess_data:
+        batt_avg_24h, batt_min_24h, batt_max_24h = get_24h_avg_min_max(
+            measurement["plant_id"],
+            "avg_batt_temp"
+        )
+
+        cont_avg_24h, cont_min_24h, cont_max_24h = get_24h_avg_min_max(
+            measurement["plant_id"],
+            "avg_container_temp"
+        )
+
+        if batt_avg_24h is not None:
+            update_latest_ess_24h_stats(
+                measurement["plant_id"],
+                batt_avg_24h,
+                batt_min_24h,
+                batt_max_24h,
+                cont_avg_24h,
+                cont_min_24h,
+                cont_max_24h
+            )
+
 
     headers = {
         "Content-Type": "application/json",
