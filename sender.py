@@ -81,6 +81,32 @@ def get_latest_environment_temp(plant_id):
 
     return row[0] if row else None
 
+def get_24h_env_temp_avg_min_max(plant_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            AVG(e.temperature),
+            MIN(e.temperature),
+            MAX(e.temperature)
+        FROM environment_data_term1 e
+        JOIN plant_environment_sensors pes
+          ON pes.sensor_id = e.sensor_id
+        WHERE pes.plant_id = %s
+          AND e.measured_at >= NOW() - INTERVAL '24 hours'
+    """, (plant_id,))
+
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if row and row[0] is not None:
+        return row[0], row[1], row[2]
+
+    return None, None, None
+
+
 def get_24h_avg_min_max(plant_id, column):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -212,10 +238,13 @@ def update_heartbeat_inbox(pod, heartbeat, sum_setpoint, scheduled_reference):
 # Payload builder
 # -------------------------------------------------
 
-def build_payload(measurement, ess_data, heartbeat_mirrored,
-                  env_temp,
-                  batt_avg_24h, batt_min_24h, batt_max_24h,
-                  cont_avg_24h, cont_min_24h, cont_max_24h):
+def build_payload(
+    measurement, ess_data, heartbeat_mirrored,
+    env_temp,
+    batt_avg_24h, batt_min_24h, batt_max_24h,
+    cont_avg_24h, cont_min_24h, cont_max_24h,
+    env_avg_24h, env_min_24h, env_max_24h
+):
     pod = measurement["pod_id"]
     measured_at = (
         measurement["measured_at"]
@@ -282,13 +311,27 @@ def build_payload(measurement, ess_data, heartbeat_mirrored,
         {"measurement": "allowedMaxSOC", "measuredAt": measured_at, "value": ess_data["allowed_max_soc"], "quality": 1},
     ])
 
-    if env_temp is not None:
-        values.append({
-            "measurement": "averageEnvironmentTemp",
-            "measuredAt": measured_at,
-            "value": env_temp,
-            "quality": 1
-        })   
+    if env_avg_24h is not None:
+        values.extend([
+            {
+                "measurement": "averageEnvironmentTemp",
+                "measuredAt": measured_at,
+                "value": env_avg_24h,
+                "quality": 1
+            },
+            {
+                "measurement": "averageEnvironmentTempMIN",
+                "measuredAt": measured_at,
+                "value": env_min_24h,
+                "quality": 1
+            },
+            {
+                "measurement": "averageEnvironmentTempMAX",
+                "measuredAt": measured_at,
+                "value": env_max_24h,
+                "quality": 1
+            }
+        ])  
 
     return [{"pod": pod, "values": values}]
 
@@ -307,6 +350,13 @@ async def send_once(measurement):
 
     ess_data = get_latest_ess_data(measurement["plant_id"])
     env_temp = get_latest_environment_temp(measurement["plant_id"])
+
+    env_avg_24h = env_min_24h = env_max_24h = None
+
+    env_avg_24h, env_min_24h, env_max_24h = get_24h_env_temp_avg_min_max(
+        measurement["plant_id"]
+    )
+
 
     batt_avg_24h = batt_min_24h = batt_max_24h = None
     cont_avg_24h = cont_min_24h = cont_max_24h = None
@@ -332,9 +382,11 @@ async def send_once(measurement):
         batt_max_24h,
         cont_avg_24h,
         cont_min_24h,
-        cont_max_24h
+        cont_max_24h,
+        env_avg_24h,
+        env_min_24h,
+        env_max_24h
     )
-
 
 # ---- STORE 24h ALTEO STATS INTO ess_data_term1 ----
     if ess_data and batt_avg_24h is not None:

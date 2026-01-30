@@ -49,6 +49,32 @@ async def poll_once(sensor):
     print(f"[ENV] Sensor {sensor['id']} → {temp:.1f} °C")
 
 
+def get_24h_env_temp_avg_min_max(plant_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            AVG(e.temperature),
+            MIN(e.temperature),
+            MAX(e.temperature)
+        FROM environment_data_term1 e
+        JOIN plant_environment_sensors pes
+          ON pes.sensor_id = e.sensor_id
+        WHERE pes.plant_id = %s
+          AND e.measured_at >= NOW() - INTERVAL '24 hours'
+    """, (plant_id,))
+
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if row and row[0] is not None:
+        return row[0], row[1], row[2]
+
+    return None, None, None
+
+
 async def main():
     conn = get_db_connection()
     cur = conn.cursor()
