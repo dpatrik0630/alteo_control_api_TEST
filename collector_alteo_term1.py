@@ -165,7 +165,7 @@ async def collect_plant_data(plant):
     ip, port, pid = plant["ip"], plant["port"], plant["id"]
 
     try:
-        logger_data = await poll_device(ip, port, plant["logger_slave_id"], plant["logger_manufacturer"], plant["register_map"])
+        logger_data = await poll_device(ip, port, plant["meter_slave_id"], plant["logger_manufacturer"], plant["register_map"])
 
         # --- cosφ validálás (-1 és 1 közé kell essen) ---
         cos_phi = logger_data.get("cos_phi")

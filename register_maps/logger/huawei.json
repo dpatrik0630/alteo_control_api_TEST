@@ -1,4 +1,4 @@
 {
-  "sum_active_power": { "address": 40525, "quantity": 2, "gain": 1000, "signed": true },
+  "sum_active_power": { "address": 32278, "quantity": 2, "gain": 1000, "signed": true },
   "cos_phi": { "address": 40532, "quantity": 1, "gain": 1000, "signed": true }
 }
