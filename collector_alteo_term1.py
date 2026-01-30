@@ -60,7 +60,7 @@ async def get_plants_and_ess():
                 p.name,
                 p.ip_address,
                 p.port,
-                p.logger_slave_id,
+                p.meter_slave_id,
                 p.logger_manufacturer,
                 e.id AS ess_id,
                 e.slave_id AS ess_slave_id,
