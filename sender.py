@@ -326,8 +326,15 @@ async def send_once(measurement):
         measurement,
         ess_data,
         heartbeat,
-        env_temp
+        env_temp,
+        batt_avg_24h,
+        batt_min_24h,
+        batt_max_24h,
+        cont_avg_24h,
+        cont_min_24h,
+        cont_max_24h
     )
+
 
 # ---- STORE 24h ALTEO STATS INTO ess_data_term1 ----
     if ess_data and batt_avg_24h is not None:
