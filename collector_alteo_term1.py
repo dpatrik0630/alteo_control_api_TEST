@@ -216,7 +216,7 @@ async def main():
                 "pod_id": r[1],
                 "ip": r[3],
                 "port": r[4],
-                "logger_slave_id": r[5],
+                "meter_slave_id": r[5],
                 "logger_manufacturer": manufacturer,
                 "register_map": load_register_map("logger", manufacturer),  # előre betöltve
                 "ess_list": [],
