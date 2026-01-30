@@ -24,22 +24,6 @@
       "fc": 3
     },
 
-    "averageBatterycellTempMIN": {
-      "address": 200,
-      "quantity": 5,
-      "gain": 10,
-      "signed": true,
-      "fc": 3
-    },
-
-    "averageBatterycellTempMAX": {
-      "address": 300,
-      "quantity": 5,
-      "gain": 10,
-      "signed": true,
-      "fc": 3
-    },
-
     "averageContainerInsideTemp": {
       "address": 400,
       "quantity": 5,

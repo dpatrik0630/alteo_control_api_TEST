@@ -71,27 +71,21 @@ def poll_ess_unit(ess, cur):
         soc = read_register(client, HITHIUM_MAP["averageCurrentSOC"])
         total_capacity = read_register(client, HITHIUM_MAP["totalCapacity"])
 
-        batt_avg = avg([
-            read_register(client, HITHIUM_MAP["averageBatterycellTemp"])
-        ])
+        # -------- Battery cell temperature (AVERAGE ONLY) --------
+        batt_vals = client.read_input_registers(
+            HITHIUM_MAP["averageBatterycellTemp"]["address"],
+            HITHIUM_MAP["averageBatterycellTemp"]["quantity"]
+        )
+        batt_vals = [v / 10.0 for v in batt_vals]
+        batt_avg = avg(batt_vals)
 
-        batt_min = avg([
-            read_register(client, HITHIUM_MAP["averageBatterycellTempMIN"])
-        ])
-
-        batt_max = avg([
-            read_register(client, HITHIUM_MAP["averageBatterycellTempMAX"])
-        ])
-
+        # -------- Container inside temperature (AVERAGE ONLY) --------
         cont_vals = client.read_input_registers(
             HITHIUM_MAP["averageContainerInsideTemp"]["address"],
             HITHIUM_MAP["averageContainerInsideTemp"]["quantity"]
         )
         cont_vals = [v / 10.0 for v in cont_vals]
-
         cont_avg = avg(cont_vals)
-        cont_min = min(cont_vals)
-        cont_max = max(cont_vals)
 
         charge_kwh, discharge_kwh = calculate_capacity(total_capacity, soc)
 
@@ -103,28 +97,20 @@ def poll_ess_unit(ess, cur):
                 plant_id,
                 measured_at,
                 avg_batt_temp,
-                min_batt_temp,
-                max_batt_temp,
                 avg_container_temp,
-                min_container_temp,
-                max_container_temp,
                 available_capacity_charge,
                 available_capacity_discharge,
                 average_current_soc,
                 allowed_min_soc,
                 allowed_max_soc
             )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             (
                 plant_id,
                 now,
                 batt_avg,
-                batt_min,
-                batt_max,
                 cont_avg,
-                cont_min,
-                cont_max,
                 charge_kwh,
                 discharge_kwh,
                 soc,

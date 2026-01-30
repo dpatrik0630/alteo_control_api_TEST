@@ -81,6 +81,28 @@ def get_latest_environment_temp(plant_id):
 
     return row[0] if row else None
 
+def get_24h_avg_min_max(plant_id, column):
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute(f"""
+        SELECT
+            AVG({column}),
+            MIN({column}),
+            MAX({column})
+        FROM ess_data_term1
+        WHERE plant_id = %s
+          AND measured_at >= NOW() - INTERVAL '24 hours'
+    """, (plant_id,))
+
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if row and row[0] is not None:
+        return row[0], row[1], row[2]
+
+    return None, None, None
 
 
 def get_last_heartbeat(pod):
@@ -201,19 +223,33 @@ def build_payload(measurement, ess_data, heartbeat_mirrored, env_temp=None):
 
     # -------- ESS EXTENSION --------
     if ess_data:
+        # 24h battery cell temp stats (from averages)
+        batt_avg_24h, batt_min_24h, batt_max_24h = get_24h_avg_min_max(
+            measurement["plant_id"],
+            "avg_batt_temp"
+        )
+
+        # 24h container inside temp stats (from averages)
+        cont_avg_24h, cont_min_24h, cont_max_24h = get_24h_avg_min_max(
+            measurement["plant_id"],
+            "avg_container_temp"
+        )
         values.extend([
-            {"measurement": "availableCapacityCharge", "measuredAt": measured_at, "value": ess_data["available_capacity_charge"], "quality": 1},
-            {"measurement": "availableCapacityDischarge", "measuredAt": measured_at, "value": ess_data["available_capacity_discharge"], "quality": 1},
-            {"measurement": "averageBatterycellTemp", "measuredAt": measured_at, "value": ess_data["avg_batt_temp"], "quality": 1},
-            {"measurement": "averageBatterycellTempMIN", "measuredAt": measured_at, "value": ess_data["min_batt_temp"], "quality": 1},
-            {"measurement": "averageBatterycellTempMAX", "measuredAt": measured_at, "value": ess_data["max_batt_temp"], "quality": 1},
-            {"measurement": "averageContainerInsideTemp", "measuredAt": measured_at, "value": ess_data["avg_container_temp"], "quality": 1},
-            {"measurement": "averageContainerInsideTempMIN", "measuredAt": measured_at, "value": ess_data["min_container_temp"], "quality": 1},
-            {"measurement": "averageContainerInsideTempMAX", "measuredAt": measured_at, "value": ess_data["max_container_temp"], "quality": 1},
-            {"measurement": "averageCurrentSOC", "measuredAt": measured_at, "value": ess_data["average_current_soc"], "quality": 1},
-            {"measurement": "allowedMinSOC", "measuredAt": measured_at, "value": ess_data["allowed_min_soc"], "quality": 1},
-            {"measurement": "allowedMaxSOC", "measuredAt": measured_at, "value": ess_data["allowed_max_soc"], "quality": 1},
-        ])
+        {"measurement": "availableCapacityCharge", "measuredAt": measured_at, "value": ess_data["available_capacity_charge"], "quality": 1},
+        {"measurement": "availableCapacityDischarge", "measuredAt": measured_at, "value": ess_data["available_capacity_discharge"], "quality": 1},
+
+        {"measurement": "averageBatterycellTemp", "measuredAt": measured_at, "value": batt_avg_24h, "quality": 1},
+        {"measurement": "averageBatterycellTempMIN", "measuredAt": measured_at, "value": batt_min_24h, "quality": 1},
+        {"measurement": "averageBatterycellTempMAX", "measuredAt": measured_at, "value": batt_max_24h, "quality": 1},
+
+        {"measurement": "averageContainerInsideTemp", "measuredAt": measured_at, "value": cont_avg_24h, "quality": 1},
+        {"measurement": "averageContainerInsideTempMIN", "measuredAt": measured_at, "value": cont_min_24h, "quality": 1},
+        {"measurement": "averageContainerInsideTempMAX", "measuredAt": measured_at, "value": cont_max_24h, "quality": 1},
+
+        {"measurement": "averageCurrentSOC", "measuredAt": measured_at, "value": ess_data["average_current_soc"], "quality": 1},
+        {"measurement": "allowedMinSOC", "measuredAt": measured_at, "value": ess_data["allowed_min_soc"], "quality": 1},
+        {"measurement": "allowedMaxSOC", "measuredAt": measured_at, "value": ess_data["allowed_max_soc"], "quality": 1},
+    ])
 
     if env_temp is not None:
         values.append({
