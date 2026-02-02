@@ -145,20 +145,18 @@ def update_ess_24h_stats_by_id(
     cur.execute(
         """
         UPDATE ess_data_term1
-        SET
-            batt_temp_24h_avg = %s,
-            batt_temp_24h_min = %s,
-            batt_temp_24h_max = %s,
-            container_temp_24h_avg = %s,
-            container_temp_24h_min = %s,
-            container_temp_24h_max = %s
-        WHERE id = %s
+            SET
+                batt_temp_24h_avg = %s,
+                batt_temp_24h_min = %s,
+                batt_temp_24h_max = %s,
+                container_temp_24h_avg = %s,
+                container_temp_24h_min = %s,
+                container_temp_24h_max = %s
+            WHERE id = %s
         """,
         (
-            batt_avg,
             batt_min,
             batt_max,
-            cont_avg,
             cont_min,
             cont_max,
             ess_row_id
@@ -406,8 +404,6 @@ async def send_once(measurement):
             safe(cont_min_24h),
             safe(cont_max_24h)
         )
-
-
 
 
     headers = {
