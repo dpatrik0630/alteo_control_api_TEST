@@ -27,26 +27,30 @@ def poll_sensor_sync(sensor):
 async def poll_once(sensor):
     temp = await asyncio.to_thread(poll_sensor_sync, sensor)
 
+    sensor_id = sensor["id"]
+    measured_at = datetime.now(timezone.utc).replace(microsecond=0)
+
     conn = get_db_connection()
     cur = conn.cursor()
 
-    cur.execute("""
+    cur.execute(
+        """
         INSERT INTO environment_data_term1 (
             sensor_id,
             measured_at,
             temperature
-        ) VALUES (%s,%s,%s)
-    """, (
-        sensor["id"],
-        datetime.now(timezone.utc).replace(microsecond=0),
-        temp
-    ))
+        )
+        VALUES (%s, %s, %s)
+        ON CONFLICT (sensor_id, measured_at) DO NOTHING
+        """,
+        (sensor_id, measured_at, temp)
+    )
 
     conn.commit()
     cur.close()
     conn.close()
 
-    print(f"[ENV] Sensor {sensor['id']} → {temp:.1f} °C")
+    print(f"[ENV] Sensor {sensor_id} → {temp:.1f} °C")
 
 
 def get_24h_env_temp_avg_min_max(plant_id):
