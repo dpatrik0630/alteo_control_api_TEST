@@ -17,7 +17,7 @@ def poll_sensor_sync(sensor):
         timeout=1.0
     )
 
-    regs = client.read_holding_registers(0, 1)
+    regs = client.read_input_registers(0, 1)
     if not regs:
         raise Exception("No data from environment sensor")
 
