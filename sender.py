@@ -94,7 +94,7 @@ def get_24h_env_temp_avg_min_max(plant_id):
         JOIN plant_environment_sensors pes
           ON pes.sensor_id = e.sensor_id
         WHERE pes.plant_id = %s
-          AND e.measured_at >= NOW() - INTERVAL '24 hours'
+          AND e.measured_at >= NOW() - INTERVAL '5 minutes'
     """, (plant_id,))
 
     row = cur.fetchone()
@@ -118,7 +118,7 @@ def get_24h_avg_min_max(plant_id, column):
             MAX({column})
         FROM ess_data_term1
         WHERE plant_id = %s
-          AND measured_at >= NOW() - INTERVAL '24 hours'
+          AND measured_at >= NOW() - INTERVAL '5 minutes'
     """, (plant_id,))
 
     row = cur.fetchone()
@@ -341,6 +341,10 @@ def build_payload(
 # -------------------------------------------------
 
 async def send_once(measurement):
+
+    def safe(v):
+        return v if v is not None else 0.0
+    
     pod = measurement["pod_id"]
     heartbeat = get_last_heartbeat(pod)
 
@@ -389,15 +393,18 @@ async def send_once(measurement):
     )
 
 # ---- STORE 24h ALTEO STATS INTO ess_data_term1 ----
-    if ess_data and batt_avg_24h is not None:
+    if ess_data and (
+        batt_avg_24h is not None
+        or cont_avg_24h is not None
+    ):
         update_ess_24h_stats_by_id(
             ess_data["id"],
-            batt_avg_24h,
-            batt_min_24h,
-            batt_max_24h,
-            cont_avg_24h,
-            cont_min_24h,
-            cont_max_24h
+            safe(batt_avg_24h),
+            safe(batt_min_24h),
+            safe(batt_max_24h),
+            safe(cont_avg_24h),
+            safe(cont_min_24h),
+            safe(cont_max_24h)
         )
 
 
