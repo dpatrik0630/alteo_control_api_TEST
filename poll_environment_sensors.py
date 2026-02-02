@@ -21,7 +21,12 @@ def poll_sensor_sync(sensor):
     if not regs:
         raise Exception("No data from environment sensor")
 
-    return regs[0] / 10.0
+    raw = regs[0]
+    if raw > 32767:
+        raw -= 65536
+
+    return raw / 10.0
+
 
 
 async def poll_once(sensor):
