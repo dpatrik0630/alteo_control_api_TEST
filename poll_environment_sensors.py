@@ -27,8 +27,6 @@ def poll_sensor_sync(sensor):
 
     return raw / 10.0
 
-
-
 async def poll_once(sensor):
     temp = await asyncio.to_thread(poll_sensor_sync, sensor)
 

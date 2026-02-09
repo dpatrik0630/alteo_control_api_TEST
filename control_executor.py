@@ -151,6 +151,18 @@ def apply_huawei_pv_limit(logger, target_kw):
     client.write_multiple_registers(meta["address"], regs)
 
 
+def get_plant_type(cur, pod_id):
+    cur.execute("""
+        SELECT plant_type
+        FROM plants
+        WHERE pod_id = %s
+        LIMIT 1
+    """, (pod_id,))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+
 def apply_fronius_pv_limit(logger, target_kw):
     meta = LOGGER_MAPS["fronius"]["controls"]["activePowerLimitPercent"]
 
@@ -192,15 +204,21 @@ def control_loop(pod_id):
         try:
             target_kw = get_latest_target_kw(cur, pod_id)
             pcc_kw = get_latest_pcc_kw(cur, pod_id)
-            ess = get_latest_ess_state(cur, pod_id)
             logger_row = get_logger_info(cur, pod_id)
 
-            if None in (target_kw, pcc_kw, ess, logger_row):
-                time.sleep(1)
+            plant_type = get_plant_type(cur, pod_id)
+
+            if None in (target_kw, pcc_kw, logger_row, plant_type):
                 continue
 
-            ip, port, cap_ch, cap_dis = ess
+            ess = get_latest_ess_state(cur, pod_id) if plant_type == "PV_ESS" else None
+
             manufacturer, lip, lport, lslave, pv_rated = logger_row
+
+            if plant_type == "PV_ESS" and ess:
+                ip, port, cap_ch, cap_dis = ess
+            else:
+                ip = port = cap_ch = cap_dis = None
 
             error = target_kw - pcc_kw
 
@@ -210,37 +228,60 @@ def control_loop(pod_id):
 
             now = time.monotonic()
 
-            # ================= ESS FIRST =================
-            if (error > 0 and cap_dis > 0) or (error < 0 and cap_ch > 0):
-                new_cmd = state.last_cmd_kw + KP * error
+            # ================= CONTROL LOGIC =================
 
-                if now - state.last_write_ts < MIN_WRITE_INTERVAL:
-                    continue
+            # ---- PV + ESS ----
+            if plant_type == "PV_ESS" and ess:
+                if (error > 0 and cap_dis > 0) or (error < 0 and cap_ch > 0):
+                    new_cmd = state.last_cmd_kw + KP * error
 
-                write_ess_setpoint(ip, port, new_cmd)
+                    if now - state.last_write_ts < MIN_WRITE_INTERVAL:
+                        continue
 
-                state.last_cmd_kw = new_cmd
-                state.last_write_ts = now
+                    write_ess_setpoint(ip, port, new_cmd)
 
-                print(f"[CTRL][ESS] POD {pod_id} → {new_cmd:.1f} kW")
+                    state.last_cmd_kw = new_cmd
+                    state.last_write_ts = now
 
-            # ================= PV FALLBACK =================
-            elif error < 0 and cap_ch <= 0:
-                logger = {
-                    "ip": lip,
-                    "port": lport,
-                    "slave": lslave,
-                    "rated_kw": pv_rated
-                }
+                    print(f"[CTRL][ESS] POD {pod_id} → {new_cmd:.1f} kW")
 
-                if manufacturer.lower() == "huawei":
-                    apply_huawei_pv_limit(logger, target_kw)
-                    print(f"[CTRL][PV][Huawei] POD {pod_id} limit {target_kw:.1f} kW")
+                elif error < 0:
+                    logger = {
+                        "ip": lip,
+                        "port": lport,
+                        "slave": lslave,
+                        "rated_kw": pv_rated
+                    }
 
-                elif manufacturer.lower() == "fronius":
-                    apply_fronius_pv_limit(logger, target_kw)
-                    print(f"[CTRL][PV][Fronius] POD {pod_id} limit {target_kw:.1f} kW")
+                    if manufacturer.lower() == "huawei":
+                        apply_huawei_pv_limit(logger, target_kw)
+                        print(f"[CTRL][PV][Huawei] POD {pod_id} limit {target_kw:.1f} kW")
 
+                    elif manufacturer.lower() == "fronius":
+                        apply_fronius_pv_limit(logger, target_kw)
+                        print(f"[CTRL][PV][Fronius] POD {pod_id} limit {target_kw:.1f} kW")
+
+
+            # ---- PV ONLY ----
+            elif plant_type == "PV_ONLY":
+                if error < 0:
+                    logger = {
+                        "ip": lip,
+                        "port": lport,
+                        "slave": lslave,
+                        "rated_kw": pv_rated
+                    }
+
+                    if manufacturer.lower() == "huawei":
+                        apply_huawei_pv_limit(logger, target_kw)
+                        print(f"[CTRL][PV_ONLY][Huawei] POD {pod_id} limit {target_kw:.1f} kW")
+
+                    elif manufacturer.lower() == "fronius":
+                        apply_fronius_pv_limit(logger, target_kw)
+                        print(f"[CTRL][PV_ONLY][Fronius] POD {pod_id} limit {target_kw:.1f} kW")
+
+            elif plant_type == "PV_ONLY" and error > 0:
+                print(f"[CTRL][PV_ONLY] POD {pod_id} cannot increase power (no ESS)")
             on_success(pod_id)
 
         except Exception as e:
