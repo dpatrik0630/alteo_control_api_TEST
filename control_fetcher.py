@@ -9,9 +9,9 @@ API_URL = "https://apim-ap-test.azure-api.net/plant-control/api/setpoint"
 CHECK_INTERVAL = 30  # mp-ként próbálja újra, ha nem volt frissítés
 
 def get_api_key():
-    key = os.getenv("API_KEY")
+    key = os.getenv("ALTEO_API_KEY")
     if not key:
-        raise RuntimeError("API_KEY environment variable is not set")
+        raise RuntimeError("ALTEO_API_KEY environment variable is not set")
     return key
 
 

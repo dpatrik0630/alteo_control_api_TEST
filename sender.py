@@ -15,9 +15,9 @@ API_URL = "http://100.107.240.37:9000/setpoint"
 CYCLE_TIME = 2
 
 def get_api_key():
-    key = os.getenv("API_KEY")
+    key = os.getenv("ALTEO_API_KEY")
     if not key:
-        raise RuntimeError("API_KEY environment variable is not set")
+        raise RuntimeError("ALTEO_API_KEY environment variable is not set")
     return key
 
 # -------------------------------------------------
