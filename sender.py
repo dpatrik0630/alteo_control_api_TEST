@@ -12,9 +12,13 @@ from db import get_db_connection
 
 # API_URL = "https://apim-ap-test.azure-api.net/plant-control/api/setpoint"
 API_URL = "http://100.107.240.37:9000/setpoint"
-API_KEY = os.getenv("ALTEO_API_KEY")  #.env
 CYCLE_TIME = 2
 
+def get_api_key():
+    key = os.getenv("API_KEY")
+    if not key:
+        raise RuntimeError("API_KEY environment variable is not set")
+    return key
 
 # -------------------------------------------------
 # DB helpers
@@ -410,7 +414,7 @@ async def send_once(measurement):
 
     headers = {
         "Content-Type": "application/json",
-        "Ocp-Apim-Subscription-Key": API_KEY
+        "Ocp-Apim-Subscription-Key": get_api_key()
     }
 
     try:

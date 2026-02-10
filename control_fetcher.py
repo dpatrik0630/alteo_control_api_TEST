@@ -6,8 +6,15 @@ from datetime import datetime
 from db import get_db_connection
 
 API_URL = "https://apim-ap-test.azure-api.net/plant-control/api/setpoint"
-API_KEY = os.getenv("ALTEO_API_KEY")
 CHECK_INTERVAL = 30  # mp-ként próbálja újra, ha nem volt frissítés
+
+def get_api_key():
+    key = os.getenv("API_KEY")
+    if not key:
+        raise RuntimeError("API_KEY environment variable is not set")
+    return key
+
+
 
 def update_heartbeat_inbox(pod, heartbeat, sum_setpoint, scheduled_reference, usesetpoint):
     """Frissíti vagy létrehozza a heartbeat rekordot"""
@@ -33,7 +40,7 @@ async def fetch_initial_heartbeat():
     """Üres [] hívás az ALTEO API-ra a kezdeti heartbeat megszerzéséhez"""
     headers = {
         "Content-Type": "application/json",
-        "Ocp-Apim-Subscription-Key": API_KEY
+        "Ocp-Apim-Subscription-Key": get_api_key()
     }
     payload = []
 
