@@ -61,17 +61,21 @@ def convert_registers_to_scaled_value(registers, gain, signed=True):
     return raw / gain
 
 
-def cosphi_to_phi_deg(cos_phi: float, manufacturer: str):
-    if cos_phi is None:
+def normalize_cosphi(raw_cosphi: float, manufacturer: str):
+    if raw_cosphi is None:
         return None
 
-    cos_phi = max(-1.0, min(1.0, cos_phi))
-    phi = math.degrees(math.acos(abs(cos_phi)))
+    # Fronius PF → cosφ (előjel nélkül)
+    if manufacturer.lower() == "fronius":
+        cosphi = abs(raw_cosphi)
 
-    if manufacturer.lower() == "huawei":
-        return phi if cos_phi >= 0 else -phi
+    # Huawei már cosφ (-1…1)
     else:
-        return phi
+        cosphi = raw_cosphi
+
+    # Biztonsági clamp
+    return max(-1.0, min(1.0, cosphi))
+
 
 
 # =========================================================
@@ -219,7 +223,7 @@ async def collect_plant_data(plant):
                 plant["register_map"]
             )
 
-            phi_deg = cosphi_to_phi_deg(
+            cosphi = normalize_cosphi(
                 logger_data.get("cos_phi"),
                 plant["manufacturer"]
             )
@@ -229,7 +233,7 @@ async def collect_plant_data(plant):
                 "pod_id": plant["pod_id"],
                 "timestamp": datetime.now(timezone.utc).replace(microsecond=0),
                 "sum_active_power": logger_data.get("sum_active_power"),
-                "cos_phi": phi_deg,
+                "cos_phi": cosphi,
                 "available_power_min": 0.0,
                 "available_power_max": abs(logger_data["sum_active_power"])
                     if logger_data.get("sum_active_power") is not None else None,
