@@ -429,7 +429,13 @@ async def send_once(measurement):
     }
 
     try:
-        resp = requests.post(API_URL, headers=headers, json=payload, timeout=5)
+        resp = await asyncio.to_thread(
+            requests.post,
+            API_URL,
+            headers=headers,
+            json=payload,
+            timeout=5
+        )
         status = resp.status_code
 
         try:
