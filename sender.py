@@ -181,7 +181,7 @@ def get_last_heartbeat(pod):
 
     cur.execute("""
         SELECT heartbeat
-        FROM alteo_control_inbox
+        FROM alteo_controls_inbox
         WHERE pod = %s
         ORDER BY received_at DESC
         LIMIT 1
@@ -221,7 +221,7 @@ def update_heartbeat_inbox(pod, heartbeat, sum_setpoint, scheduled_reference):
     cur = conn.cursor()
 
     cur.execute("""
-        INSERT INTO alteo_control_inbox (
+        INSERT INTO alteo_controls_inbox (
             pod,
             heartbeat,
             sum_setpoint,

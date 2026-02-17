@@ -56,7 +56,7 @@ class PodControlState:
 def get_latest_target_kw(cur, pod_id):
     cur.execute("""
         SELECT sum_setpoint
-        FROM alteo_control_inbox
+        FROM alteo_controls_inbox
         WHERE pod = %s
         ORDER BY received_at DESC
         LIMIT 1
