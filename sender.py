@@ -29,17 +29,20 @@ def get_latest_plant_data():
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     cur.execute("""
-        SELECT DISTINCT ON (plant_id)
-            plant_id,
-            pod_id,
-            measured_at,
-            sum_active_power,
-            cos_phi,
-            available_power_min,
-            available_power_max,
-            reference_power
-        FROM plant_data_term1
-        ORDER BY plant_id, measured_at DESC
+        SELECT DISTINCT ON (p.id)
+            p.id AS plant_id,
+            pd.pod_id,
+            pd.measured_at,
+            pd.sum_active_power,
+            pd.cos_phi,
+            pd.available_power_min,
+            pd.available_power_max,
+            pd.reference_power
+        FROM plants p
+        JOIN plant_data_term1 pd
+            ON pd.plant_id = p.id
+        WHERE p.alteo_api_control = true
+        ORDER BY p.id, pd.measured_at DESC
     """)
 
     rows = cur.fetchall()
