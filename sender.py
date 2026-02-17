@@ -9,6 +9,7 @@ from psycopg2.extras import RealDictCursor
 
 from db import get_db_connection
 
+USE_HEARTBEAT = False
 
 #API_URL = "https://apim-ap-test.azure-api.net/plant-control/api/setpoint"
 API_URL = "https://ams-partner-api.azure-api.net/plant-control/api/setpoint"
@@ -353,9 +354,12 @@ async def send_once(measurement):
     pod = measurement["pod_id"]
     heartbeat = get_last_heartbeat(pod)
 
-    if heartbeat is None or heartbeat <= 0:
-        print(f"[SENDER] POD {pod}: no valid heartbeat, skipping")
-        return
+    if USE_HEARTBEAT:
+        if heartbeat is None or heartbeat <= 0:
+            print(f"[SENDER] POD {pod}: no valid heartbeat, skipping")
+            return
+    else:
+        heartbeat = 1
 
     ess_data = get_latest_ess_data(measurement["plant_id"])
     env_temp = get_latest_environment_temp(measurement["plant_id"])
