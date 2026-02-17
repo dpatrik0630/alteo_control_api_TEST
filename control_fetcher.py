@@ -5,7 +5,7 @@ import requests
 from datetime import datetime
 from db import get_db_connection
 
-API_URL = "https://apim-ap-test.azure-api.net/plant-control/api/setpoint"
+API_URL = "https://ams-partner-api.azure-api.net/plant-control/api/setpoint"
 CHECK_INTERVAL = 30  # mp-ként próbálja újra, ha nem volt frissítés
 
 def get_api_key():
