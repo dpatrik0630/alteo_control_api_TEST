@@ -179,6 +179,7 @@ async def store_term1_data(records):
                 ghi,
                 panel_temp
             ) VALUES %s
+            ON CONFLICT (plant_id, measured_at) DO NOTHING
         """, [
             (
                 r["plant_id"],
