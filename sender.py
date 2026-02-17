@@ -3,7 +3,7 @@ import json
 import os
 import time
 import requests
-from datetime import timezone
+from datetime import datetime, timezone
 
 from psycopg2.extras import RealDictCursor
 
@@ -260,8 +260,7 @@ def build_payload(
 ):
     pod = measurement["pod_id"]
     measured_at = (
-        measurement["measured_at"]
-        .astimezone(timezone.utc)
+        datetime.now(timezone.utc)
         .isoformat(timespec="milliseconds")
         .replace("+00:00", "Z")
     )
