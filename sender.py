@@ -201,9 +201,9 @@ def store_alteo_response(pod, payload, response, status):
     cur.execute("""
         INSERT INTO alteo_send_log (
             pod,
-            request_payload,
-            response_payload,
-            http_status
+            request_json,
+            response_json,
+            status_code
         ) VALUES (%s,%s,%s,%s)
     """, (
         pod,
@@ -227,8 +227,15 @@ def update_heartbeat_inbox(pod, heartbeat, sum_setpoint, scheduled_reference):
             heartbeat,
             sum_setpoint,
             scheduled_reference
-        ) VALUES (%s,%s,%s,%s)
-    """, (
+        )
+        VALUES (%s,%s,%s,%s)
+        ON CONFLICT (pod)
+        DO UPDATE SET
+            heartbeat = EXCLUDED.heartbeat,
+            sum_setpoint = EXCLUDED.sum_setpoint,
+            scheduled_reference = EXCLUDED.scheduled_reference,
+            received_at = NOW();
+            """, (
         pod,
         heartbeat,
         sum_setpoint,
