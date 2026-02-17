@@ -353,9 +353,9 @@ async def send_once(measurement):
     pod = measurement["pod_id"]
     heartbeat = get_last_heartbeat(pod)
 
-    if heartbeat is None or heartbeat <= 0:
+    '''if heartbeat is None or heartbeat <= 0:
         print(f"[SENDER] POD {pod}: no valid heartbeat, skipping")
-        return
+        return'''
 
     ess_data = get_latest_ess_data(measurement["plant_id"])
     env_temp = get_latest_environment_temp(measurement["plant_id"])
