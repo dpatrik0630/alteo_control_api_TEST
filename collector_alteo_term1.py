@@ -145,7 +145,8 @@ async def get_plants():
                 ip_address,
                 port,
                 meter_slave_id,
-                logger_manufacturer
+                logger_manufacturer,
+                normal_power
             FROM plants
             WHERE alteo_api_control = TRUE;
         """)
@@ -229,17 +230,27 @@ async def collect_plant_data(plant):
                 plant["manufacturer"]
             )
 
+            raw_power = logger_data.get("sum_active_power")
+
+            if raw_power is not None:
+                corrected_power = -raw_power
+            else:
+                corrected_power = None
+
             record = {
                 "plant_id": pid,
                 "pod_id": plant["pod_id"],
                 "timestamp": datetime.now(timezone.utc).replace(microsecond=0),
-                "sum_active_power": logger_data.get("sum_active_power"),
+
+                "sum_active_power": corrected_power,
                 "cos_phi": cosphi,
+
                 "available_power_min": 0.0,
-                "available_power_max": abs(logger_data["sum_active_power"])
-                    if logger_data.get("sum_active_power") is not None else None,
-                "reference_power": abs(logger_data["sum_active_power"])
-                    if logger_data.get("sum_active_power") is not None else None,
+                "available_power_max": plant["normal_power"],
+
+                "reference_power": abs(corrected_power)
+                    if corrected_power is not None else None,
+
                 "ghi": None,
                 "panel_temp": None,
             }
@@ -270,6 +281,7 @@ async def main():
             "meter_slave_id": r[4],
             "manufacturer": r[5],
             "register_map": load_register_map("PCC_meter", r[5]),
+            "normal_power":r[6],
         })
 
     print(f"[ALTEO_TERM1] Started for {len(plants)} plants")
