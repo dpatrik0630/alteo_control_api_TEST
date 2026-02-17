@@ -11,9 +11,7 @@ from db import get_db_connection
 
 USE_HEARTBEAT = False
 
-#API_URL = "https://apim-ap-test.azure-api.net/plant-control/api/setpoint"
 API_URL = "https://ams-partner-api.azure-api.net/plant-control/api/setpoint"
-#API_URL = "http://100.107.240.37:9000/setpoint"
 CYCLE_TIME = 2
 
 def get_api_key():
@@ -463,14 +461,36 @@ async def send_once(measurement):
         print(f"[ERROR] POD {pod}: {e}")
 
 
+async def plant_loop(plant_id):
+    while True:
+        try:
+            # mindig friss adatot kérünk a DB-ből
+            measurement = get_latest_plant_data()
+            # kiválasztjuk az adott plantet
+            plant_measurement = next(
+                (m for m in measurement if m["plant_id"] == plant_id),
+                None
+            )
+
+            if plant_measurement:
+                await send_once(plant_measurement)
+
+        except Exception as e:
+            print(f"[PLANT LOOP ERROR] plant_id={plant_id}: {e}")
+
+        await asyncio.sleep(CYCLE_TIME)
+
+
 async def main():
     print("[SENDER] Started")
 
-    while True:
-        measurements = get_latest_plant_data()
-        tasks = [send_once(m) for m in measurements]
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await asyncio.sleep(CYCLE_TIME)
+    measurements = get_latest_plant_data()
+    plant_ids = [m["plant_id"] for m in measurements]
+
+    tasks = [plant_loop(pid) for pid in plant_ids]
+
+    await asyncio.gather(*tasks)
+
 
 
 if __name__ == "__main__":
