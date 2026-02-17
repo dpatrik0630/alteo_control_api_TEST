@@ -10,7 +10,8 @@ from psycopg2.extras import RealDictCursor
 from db import get_db_connection
 
 
-API_URL = "https://apim-ap-test.azure-api.net/plant-control/api/setpoint"
+#API_URL = "https://apim-ap-test.azure-api.net/plant-control/api/setpoint"
+API_URL = "https://ams-partner-api.azure-api.net/plant-control/api/setpoint"
 #API_URL = "http://100.107.240.37:9000/setpoint"
 CYCLE_TIME = 2
 
