@@ -206,6 +206,11 @@ def control_loop(pod_id):
         try:
             target_kw = get_latest_target_kw(cur, pod_id)
             pcc_kw = get_latest_pcc_kw(cur, pod_id)
+            pcc_kw = -pcc_kw if pcc_kw is not None else None
+            # Meter returns:
+            #   negative = export (production)
+            #   positive = import (consumption)
+            # Control logic expects production as positive.
             logger_row = get_logger_info(cur, pod_id)
 
             plant_type = get_plant_type(cur, pod_id)
