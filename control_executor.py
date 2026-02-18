@@ -74,7 +74,7 @@ def get_latest_pcc_kw(cur, pod_id):
     cur.execute("""
         SELECT sum_active_power
         FROM plant_data_term1
-        WHERE pod_id = %s
+        WHERE pod = %s
         ORDER BY measured_at DESC
         LIMIT 1
     """, (pod_id,))
@@ -109,10 +109,10 @@ def get_logger_info(cur, pod_id):
             pv_rated_power_kw
         FROM plants
         WHERE pod_id = %s
+          AND plant_type = 'PV_ONLY'
         LIMIT 1
     """, (pod_id,))
     return cur.fetchone()
-
 
 # ==============================
 # MODBUS WRITES
@@ -161,6 +161,7 @@ def get_plant_type(cur, pod_id):
         SELECT plant_type
         FROM plants
         WHERE pod_id = %s
+          AND plant_type = 'PV_ONLY'
         LIMIT 1
     """, (pod_id,))
     row = cur.fetchone()
