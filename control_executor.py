@@ -242,7 +242,15 @@ def control_loop(pod_id):
             else:
                 ip = port = cap_ch = cap_dis = None
 
-            error = target_kw - pcc_kw
+            actual_kw = -pcc_kw
+            error = target_kw - actual_kw
+            print(
+                f"[CTRL][CALC] POD={pod_id} "
+                f"target={target_kw} "
+                f"pcc_raw={pcc_kw} "
+                f"actual={actual_kw} "
+                f"error={error}"
+            )
 
             print(
                 f"[CTRL][STATE] POD={pod_id} "
