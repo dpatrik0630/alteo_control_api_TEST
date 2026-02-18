@@ -196,9 +196,9 @@ def control_loop(pod_id):
 
         print(f"[CTRL][LOOP] Checking POD={pod_id}")
 
-        if should_skip(pod_id):
+        '''if should_skip(pod_id):
             time.sleep(1)
-            continue
+            continue'''
 
         conn = get_db_connection()
         cur = conn.cursor()
