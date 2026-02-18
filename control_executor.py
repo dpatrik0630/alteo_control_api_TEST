@@ -2,10 +2,14 @@ import time
 import threading
 import json
 from pathlib import Path
-
 from db import get_db_connection
 from breaker import should_skip, on_failure, on_success
 from pyModbusTCP.client import ModbusClient
+import sys
+sys.stdout.reconfigure(line_buffering=True)
+
+
+print("========== CONTROL EXECUTOR VERSION 2 ==========")
 
 
 # ==============================
@@ -325,9 +329,9 @@ def control_loop(pod_id):
                 print(f"[CTRL][PV_ONLY] POD {pod_id} cannot increase power (no ESS)")
             on_success(pod_id)
 
-        except Exception as e:
-            print(f"[CTRL][ERROR] POD {pod_id}: {e}")
-            on_failure(pod_id)
+        #except Exception as e:
+        #    print(f"[CTRL][ERROR] POD {pod_id}: {e}")
+        #    on_failure(pod_id)
 
         finally:
             cur.close()
