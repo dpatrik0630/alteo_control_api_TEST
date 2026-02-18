@@ -1,3 +1,4 @@
+print("CONTROL EXECUTOR FILE LOADED BEFORE IMPORTS", flush=True)
 import time
 import threading
 import json
