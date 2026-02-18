@@ -348,8 +348,10 @@ def control_loop(pod_id):
 # ==============================
 
 def main():
+    print("MAIN STARTED BEFORE DB", flush=True)
     conn = get_db_connection()
     cur = conn.cursor()
+    print("DB CONNECTED", flush=True)
 
     cur.execute("""
         SELECT DISTINCT pod_id
