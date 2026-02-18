@@ -12,10 +12,10 @@ from pyModbusTCP.client import ModbusClient
 # CONFIG
 # ==============================
 
-CONTROL_INTERVAL = 0.3
-DEADBAND_KW = 5.0
-KP = 0.5
-MIN_WRITE_INTERVAL = 0.8
+CONTROL_INTERVAL = 1.5
+DEADBAND_KW = 4.0
+KP = 0.3
+MIN_WRITE_INTERVAL = 4.0
 
 BASE_DIR = Path(__file__).parent
 
