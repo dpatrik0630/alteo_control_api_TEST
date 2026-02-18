@@ -235,8 +235,10 @@ def update_heartbeat_inbox(pod, heartbeat, sum_setpoint, scheduled_reference):
             heartbeat = EXCLUDED.heartbeat,
             sum_setpoint = EXCLUDED.sum_setpoint,
             scheduled_reference = EXCLUDED.scheduled_reference,
-            received_at = NOW();
-            """, (
+            received_at = NOW()
+        WHERE alteo_controls_inbox.heartbeat IS NULL
+        OR alteo_controls_inbox.heartbeat < EXCLUDED.heartbeat;
+    """, (
         pod,
         heartbeat,
         sum_setpoint,
