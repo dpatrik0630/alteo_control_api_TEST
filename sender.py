@@ -476,7 +476,8 @@ async def plant_loop(plant_id):
             )
 
             if plant_measurement:
-                await send_once(plant_measurement)
+                #await send_once(plant_measurement)
+                asyncio.create_task(send_once(plant_measurement))
 
         except Exception as e:
             print(f"[PLANT LOOP ERROR] plant_id={plant_id}: {e}")
