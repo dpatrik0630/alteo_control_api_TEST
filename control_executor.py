@@ -194,6 +194,8 @@ def control_loop(pod_id):
     while True:
         start = time.monotonic()
 
+        print(f"[CTRL][LOOP] Checking POD={pod_id}")
+
         if should_skip(pod_id):
             time.sleep(1)
             continue
@@ -208,7 +210,22 @@ def control_loop(pod_id):
 
             plant_type = get_plant_type(cur, pod_id)
 
+            print(
+                f"[CTRL][DATA] POD={pod_id} "
+                f"target={target_kw} "
+                f"pcc={pcc_kw} "
+                f"type={plant_type}"
+            )
+
             if None in (target_kw, pcc_kw, logger_row, plant_type):
+                print(
+                    f"[CTRL][SKIP][MISSING_DATA] "
+                    f"POD={pod_id} "
+                    f"target={target_kw} "
+                    f"pcc={pcc_kw} "
+                    f"logger={logger_row} "
+                    f"type={plant_type}"
+                )
                 continue
 
             ess = get_latest_ess_state(cur, pod_id) if plant_type == "PV_ESS" else None
@@ -222,8 +239,17 @@ def control_loop(pod_id):
 
             error = target_kw - pcc_kw
 
+            print(
+                f"[CTRL][STATE] POD={pod_id} "
+                f"error={error}"
+            )
+
             # ---- DEAD BAND ----
             if abs(error) < DEADBAND_KW:
+                print(
+                    f"[CTRL][SKIP][DEADBAND] POD={pod_id} "
+                    f"error={error}"
+                )
                 continue
 
             now = time.monotonic()
@@ -232,6 +258,7 @@ def control_loop(pod_id):
 
             # ---- PV + ESS ----
             if plant_type == "PV_ESS" and ess:
+                print(f"[CTRL][BRANCH] PV_ESS for POD={pod_id}")
                 if (error > 0 and cap_dis > 0) or (error < 0 and cap_ch > 0):
                     new_cmd = state.last_cmd_kw + KP * error
 
@@ -264,6 +291,7 @@ def control_loop(pod_id):
 
             # ---- PV ONLY ----
             elif plant_type == "PV_ONLY":
+                print(f"[CTRL][BRANCH] PV_ONLY for POD={pod_id}")
                 if error < 0:
                     logger = {
                         "ip": lip,
@@ -294,6 +322,8 @@ def control_loop(pod_id):
 
         elapsed = time.monotonic() - start
         time.sleep(max(0, CONTROL_INTERVAL - elapsed))
+
+
 
 
 # ==============================
