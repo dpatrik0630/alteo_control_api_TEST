@@ -7,7 +7,7 @@ from db import get_db_connection
 # CONFIG
 # ==========================================
 
-STEP_MINUTES = 5
+STEP_MINUTES = 1
 
 TEST_SEQUENCE = [
     0,
