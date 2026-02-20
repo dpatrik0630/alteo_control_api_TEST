@@ -210,14 +210,15 @@ def control_loop(pod_id):
         conn = get_db_connection()
         cur = conn.cursor()
 
-        if first_run and pcc_kw is not None:
-            state.last_cmd_kw = pcc_kw
-            first_run = False
-            print(f"[CTRL][INIT] POD {pod_id} initialized from measurement: {pcc_kw} kW")
-
         try:
             target_kw = get_latest_target_kw(cur, pod_id)
             pcc_kw = get_latest_pcc_kw(cur, pod_id)
+
+            if first_run and pcc_kw is not None:
+                        state.last_cmd_kw = pcc_kw
+                        first_run = False
+                        print(f"[CTRL][INIT] POD {pod_id} initialized from measurement: {pcc_kw} kW")
+
             logger_row = get_logger_info(cur, pod_id)
 
             plant_type = get_plant_type(cur, pod_id)
