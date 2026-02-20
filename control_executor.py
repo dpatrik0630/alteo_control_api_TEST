@@ -219,7 +219,7 @@ def control_loop(pod_id):
             pcc_kw = get_latest_pcc_kw(cur, pod_id)
 
             if first_run and pcc_kw is not None:
-                        state.last_cmd_kw = pcc_kw
+                        state.last_cmd_kw = float(pcc_kw)
                         first_run = False
                         print(f"[CTRL][INIT] POD {pod_id} initialized from measurement: {pcc_kw} kW")
 
@@ -321,11 +321,11 @@ def control_loop(pod_id):
                 # Kiszámoljuk a korrekciót (P-tag)
                 # Ha a mérés (actual) több mint a cél (target), az error negatív lesz, 
                 # így a new_limit csökkenni fog.
-                adjustment = KP * error
-                new_limit = state.last_cmd_kw + adjustment
+                adjustment = float(KP * error)
+                new_limit = float(state.last_cmd_kw + adjustment)
                 
                 # Szigorú korlátok: 0 és a névleges teljesítmény között
-                new_limit = max(0.0, min(pv_rated, new_limit))
+                new_limit = max(0.0, min(float(pv_rated), new_limit))
                 
                 logger = {
                     "ip": lip,
@@ -343,7 +343,7 @@ def control_loop(pod_id):
                     print(f"[CTRL][PV_ONLY][SOFT] POD {pod_id} -> limit: {new_limit:.2f} kW", flush=True)
 
                 # Elmentjük a parancsot a következő körhöz
-                state.last_cmd_kw = new_limit
+                state.last_cmd_kw = float(new_limit)
                     
             elif plant_type == "PV_ONLY" and error > 0:
                 print(f"[CTRL][PV_ONLY] POD {pod_id} cannot increase power (no ESS)")
