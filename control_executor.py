@@ -103,10 +103,10 @@ def get_logger_info(cur, pod_id):
     cur.execute("""
         SELECT
             logger_manufacturer,
-            logger_ip,
-            logger_port,
+            ip_address,
+            port,
             logger_slave_id,
-            pv_rated_power_kw
+            normal_power
         FROM plants
         WHERE pod_id = %s
           AND plant_type = 'PV_ONLY'
