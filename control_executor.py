@@ -306,22 +306,21 @@ def control_loop(pod_id):
             # ---- PV ONLY ----
             elif plant_type == "PV_ONLY":
                 print(f"[CTRL][BRANCH] PV_ONLY for POD={pod_id}")
-                if error < 0:
-                    logger = {
+                logger = {
                         "ip": lip,
                         "port": lport,
                         "slave": lslave,
                         "rated_kw": pv_rated
                     }
 
-                    if manufacturer.lower() == "huawei":
+                if manufacturer.lower() == "huawei":
                         apply_huawei_pv_limit(logger, target_kw)
                         print(f"[CTRL][PV_ONLY][Huawei] POD {pod_id} limit {target_kw:.1f} kW")
 
-                    elif manufacturer.lower() == "fronius":
+                elif manufacturer.lower() == "fronius":
                         apply_fronius_pv_limit(logger, target_kw)
-                        print(f"[CTRL][PV_ONLY][Fronius] POD {pod_id} limit {target_kw:.1f} kW")
-
+                        print(f"[CTRL][PV_ONLY][Fronius] POD {pod_id} limit {target_kw:.1f} kW")    
+                    
             elif plant_type == "PV_ONLY" and error > 0:
                 print(f"[CTRL][PV_ONLY] POD {pod_id} cannot increase power (no ESS)")
             on_success(pod_id)
