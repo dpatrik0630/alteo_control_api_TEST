@@ -67,7 +67,9 @@ def get_latest_target_kw(cur, pod_id):
         LIMIT 1
     """, (pod_id,))
     row = cur.fetchone()
-    return row[0] if row else None
+    if row and row[0] is not None:
+        return float(row[0])
+    return None
 
 
 def get_latest_pcc_kw(cur, pod_id):
@@ -79,7 +81,9 @@ def get_latest_pcc_kw(cur, pod_id):
         LIMIT 1
     """, (pod_id,))
     row = cur.fetchone()
-    return row[0] if row else None
+    if row and row[0] is not None:
+        return float(row[0])
+    return None
 
 
 def get_latest_ess_state(cur, pod_id):
