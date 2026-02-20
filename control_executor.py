@@ -326,9 +326,10 @@ def control_loop(pod_id):
                 print(f"[CTRL][PV_ONLY] POD {pod_id} cannot increase power (no ESS)")
             on_success(pod_id)
 
-        #except Exception as e:
-        #    print(f"[CTRL][ERROR] POD {pod_id}: {e}")
-        #    on_failure(pod_id)
+        except Exception as e:
+            print(f"[CTRL][ERROR] POD {pod_id} hiba: {e}", flush=True)
+            # Itt opcionálisan használhatod a breaker-t:
+            # on_failure(pod_id)
 
         finally:
             cur.close()
