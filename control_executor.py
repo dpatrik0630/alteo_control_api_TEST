@@ -18,7 +18,7 @@ print("========== CONTROL EXECUTOR VERSION 2 ==========")
 # ==============================
 
 CONTROL_INTERVAL = 1.5
-DEADBAND_KW = 1.0
+DEADBAND_KW = 0.0 # JUST FOR TESTING
 KP = 0.3
 MIN_WRITE_INTERVAL = 4.0
 
