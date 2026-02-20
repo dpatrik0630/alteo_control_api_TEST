@@ -196,6 +196,7 @@ def apply_fronius_pv_limit(logger, target_kw):
 
 def control_loop(pod_id):
     state = PodControlState(pod_id)
+    first_run = True
 
     while True:
         start = time.monotonic()
@@ -208,6 +209,11 @@ def control_loop(pod_id):
 
         conn = get_db_connection()
         cur = conn.cursor()
+
+        if first_run and pcc_kw is not None:
+            state.last_cmd_kw = pcc_kw
+            first_run = False
+            print(f"[CTRL][INIT] POD {pod_id} initialized from measurement: {pcc_kw} kW")
 
         try:
             target_kw = get_latest_target_kw(cur, pod_id)
@@ -303,23 +309,36 @@ def control_loop(pod_id):
                         print(f"[CTRL][PV][Fronius] POD {pod_id} limit {target_kw:.1f} kW")
 
 
-            # ---- PV ONLY ----
+            # ---- PV ONLY (Closed Loop / Lágy szabályozással) ----
             elif plant_type == "PV_ONLY":
-                print(f"[CTRL][BRANCH] PV_ONLY for POD={pod_id}")
+                print(f"[CTRL][BRANCH] PV_ONLY for POD={pod_id}", flush=True)
+                
+                # Kiszámoljuk a korrekciót (P-tag)
+                # Ha a mérés (actual) több mint a cél (target), az error negatív lesz, 
+                # így a new_limit csökkenni fog.
+                adjustment = KP * error
+                new_limit = state.last_cmd_kw + adjustment
+                
+                # Szigorú korlátok: 0 és a névleges teljesítmény között
+                new_limit = max(0.0, min(pv_rated, new_limit))
+                
                 logger = {
-                        "ip": lip,
-                        "port": lport,
-                        "slave": lslave,
-                        "rated_kw": pv_rated
-                    }
+                    "ip": lip,
+                    "port": lport,
+                    "slave": lslave,
+                    "rated_kw": pv_rated
+                }
 
                 if manufacturer.lower() == "huawei":
-                        apply_huawei_pv_limit(logger, target_kw)
-                        print(f"[CTRL][PV_ONLY][Huawei] POD {pod_id} limit {target_kw:.1f} kW")
-
+                    apply_huawei_pv_limit(logger, new_limit)
+                    print(f"[CTRL][PV_ONLY][SOFT] POD {pod_id} -> limit: {new_limit:.2f} kW (target: {target_kw}, actual: {actual_kw})", flush=True)
+                
                 elif manufacturer.lower() == "fronius":
-                        apply_fronius_pv_limit(logger, target_kw)
-                        print(f"[CTRL][PV_ONLY][Fronius] POD {pod_id} limit {target_kw:.1f} kW")    
+                    apply_fronius_pv_limit(logger, new_limit)
+                    print(f"[CTRL][PV_ONLY][SOFT] POD {pod_id} -> limit: {new_limit:.2f} kW", flush=True)
+
+                # Elmentjük a parancsot a következő körhöz
+                state.last_cmd_kw = new_limit
                     
             elif plant_type == "PV_ONLY" and error > 0:
                 print(f"[CTRL][PV_ONLY] POD {pod_id} cannot increase power (no ESS)")
