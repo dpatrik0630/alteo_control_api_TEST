@@ -10,10 +10,10 @@ from db import get_db_connection
 STEP_MINUTES = 5
 
 TEST_SEQUENCE = [
-    50,
-    100,
-    200,
-    300
+    0,
+    5,
+    10,
+    20
 ]
 
 WRITE_INTERVAL = 30  # mp

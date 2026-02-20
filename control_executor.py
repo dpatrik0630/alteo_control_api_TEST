@@ -74,7 +74,7 @@ def get_latest_pcc_kw(cur, pod_id):
     cur.execute("""
         SELECT sum_active_power
         FROM plant_data_term1
-        WHERE pod = %s
+        WHERE pod_id = %s
         ORDER BY measured_at DESC
         LIMIT 1
     """, (pod_id,))
