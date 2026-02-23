@@ -11,7 +11,7 @@ from psycopg2.extras import RealDictCursor
 
 USE_HEARTBEAT = False
 
-API_URL = "https://apim-ap-test.azure-api.net/plant-control/api/setpoint"
+API_URL = "https://ams-partner-api.azure-api.net/plant-control/api/setpoint"
 
 CYCLE_TIME = 2
 MAX_WORKERS = 8
