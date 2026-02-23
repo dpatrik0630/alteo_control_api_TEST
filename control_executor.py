@@ -3,7 +3,7 @@ import time
 import threading
 import json
 from pathlib import Path
-from db import get_db_connection
+from db import get_db_connection, release_db_connection
 from breaker import should_skip, on_failure, on_success
 from pyModbusTCP.client import ModbusClient
 import sys
@@ -356,7 +356,7 @@ def control_loop(pod_id):
 
         finally:
             cur.close()
-            conn.close()
+            release_db_connection(conn)
 
         elapsed = time.monotonic() - start
         time.sleep(max(0, CONTROL_INTERVAL - elapsed))
@@ -372,17 +372,19 @@ def main():
     print("MAIN STARTED BEFORE DB", flush=True)
     conn = get_db_connection()
     cur = conn.cursor()
-    print("DB CONNECTED", flush=True)
+    try:
+        print("DB CONNECTED", flush=True)
 
-    cur.execute("""
-        SELECT DISTINCT pod_id
-        FROM plants
-        WHERE alteo_api_control = TRUE
-    """)
-    pods = [r[0] for r in cur.fetchall()]
+        cur.execute("""
+            SELECT DISTINCT pod_id
+            FROM plants
+            WHERE alteo_api_control = TRUE
+        """)
+        pods = [r[0] for r in cur.fetchall()]
 
-    cur.close()
-    conn.close()
+    finally:
+        cur.close()
+        release_db_connection(conn)
 
     print(f"[CTRL_EXEC] Starting control loops for {len(pods)} PODs")
 

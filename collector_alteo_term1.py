@@ -7,7 +7,7 @@ from pathlib import Path
 from pyModbusTCP.client import ModbusClient
 from psycopg2.extras import execute_values
 
-from db import get_db_connection
+from db import get_db_connection, release_db_connection
 from breaker import should_skip, on_success, on_failure
 
 
@@ -138,21 +138,23 @@ async def get_plants():
     def _fetch():
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("""
-            SELECT
-                id,
-                pod_id,
-                ip_address,
-                port,
-                meter_slave_id,
-                logger_manufacturer,
-                normal_power
-            FROM plants
-            WHERE alteo_api_control = TRUE;
-        """)
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
+        try:
+            cur.execute("""
+                SELECT
+                    id,
+                    pod_id,
+                    ip_address,
+                    port,
+                    meter_slave_id,
+                    logger_manufacturer,
+                    normal_power
+                FROM plants
+                WHERE alteo_api_control = TRUE;
+            """)
+            rows = cur.fetchall()
+        finally:  
+            cur.close()
+            release_db_connection(conn)
         return rows
 
     return await loop.run_in_executor(None, _fetch)
@@ -167,37 +169,39 @@ async def store_term1_data(records):
     def _insert():
         conn = get_db_connection()
         cur = conn.cursor()
-        execute_values(cur, """
-            INSERT INTO plant_data_term1 (
-                plant_id,
-                pod_id,
-                measured_at,
-                sum_active_power,
-                cos_phi,
-                available_power_min,
-                available_power_max,
-                reference_power,
-                ghi,
-                panel_temp
-            ) VALUES %s
-            ON CONFLICT (plant_id, measured_at) DO NOTHING
-        """, [
-            (
-                r["plant_id"],
-                r["pod_id"],
-                r["timestamp"],
-                r["sum_active_power"],
-                r["cos_phi"],
-                r["available_power_min"],
-                r["available_power_max"],
-                r["reference_power"],
-                r["ghi"],
-                r["panel_temp"]
-            ) for r in records
-        ])
-        conn.commit()
-        cur.close()
-        conn.close()
+        try:
+            execute_values(cur, """
+                INSERT INTO plant_data_term1 (
+                    plant_id,
+                    pod_id,
+                    measured_at,
+                    sum_active_power,
+                    cos_phi,
+                    available_power_min,
+                    available_power_max,
+                    reference_power,
+                    ghi,
+                    panel_temp
+                ) VALUES %s
+                ON CONFLICT (plant_id, measured_at) DO NOTHING
+            """, [
+                (
+                    r["plant_id"],
+                    r["pod_id"],
+                    r["timestamp"],
+                    r["sum_active_power"],
+                    r["cos_phi"],
+                    r["available_power_min"],
+                    r["available_power_max"],
+                    r["reference_power"],
+                    r["ghi"],
+                    r["panel_temp"]
+                ) for r in records
+            ])
+            conn.commit()
+        finally:
+            cur.close()
+            release_db_connection(conn)
 
     await loop.run_in_executor(None, _insert)
 

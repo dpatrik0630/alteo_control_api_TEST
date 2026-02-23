@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pyModbusTCP.client import ModbusClient
-from db import get_db_connection
+from db import get_db_connection, release_db_connection
 from breaker import should_skip, on_failure, on_success
 
 TARGET_PERIOD = 1.0
@@ -132,12 +132,19 @@ async def poll_single_ess_async(ess, cur):
     if should_skip(plant_id):
         return
 
+    conn = get_db_connection()
+    cur = conn.cursor()
+
     try:
         await asyncio.to_thread(poll_ess_unit, ess, cur)
+        conn.commit()
         on_success(plant_id)
     except Exception as e:
-        print(f"[ESS][ERROR] Plant {plant_id} → {e}")
+        print(...)
         on_failure(plant_id)
+    finally:
+        cur.close()
+        release_db_connection(conn)
 
 
 async def main_async():
@@ -145,28 +152,31 @@ async def main_async():
     conn.autocommit = True
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT plant_id, ip_address, port
-        FROM ess_units
-        WHERE active = true
-    """)
+    try:
+        cur.execute("""
+            SELECT plant_id, ip_address, port
+            FROM ess_units
+            WHERE active = true
+        """)
 
-    ess_units = [
-        {"plant_id": r[0], "ip_address": r[1], "port": r[2]}
-        for r in cur.fetchall()
-    ]
+        ess_units = [
+            {"plant_id": r[0], "ip_address": r[1], "port": r[2]}
+            for r in cur.fetchall()
+        ]
 
-    print(f"[ESS] Found {len(ess_units)} active ESS units")
+        print(f"[ESS] Found {len(ess_units)} active ESS units")
 
-    while True:
-        cycle_start = time.monotonic()
-        await asyncio.gather(
-            *[poll_single_ess_async(ess, cur) for ess in ess_units]
-        )
+        while True:
+            cycle_start = time.monotonic()
+            await asyncio.gather(
+                *[poll_single_ess_async(ess) for ess in ess_units]
+            )
 
-        sleep_time = TARGET_PERIOD - (time.monotonic() - cycle_start)
-        if sleep_time > 0:
-            await asyncio.sleep(sleep_time)
+            sleep_time = TARGET_PERIOD - (time.monotonic() - cycle_start)
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
+    finally:
+        release_db_connection(conn)
 
 
 if __name__ == "__main__":
