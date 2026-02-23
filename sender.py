@@ -94,7 +94,7 @@ def get_latest_environment_temp(plant_id):
         cur.close()
         release_db_connection(conn)
 
-    return row[0] if row else None
+    return row["temperature"] if row else None
 
 def get_24h_env_temp_avg_min_max(plant_id):
     conn = get_db_connection()
@@ -102,9 +102,9 @@ def get_24h_env_temp_avg_min_max(plant_id):
     try:
         cur.execute("""
             SELECT
-                AVG(e.temperature),
-                MIN(e.temperature),
-                MAX(e.temperature)
+                AVG(e.temperature) AS avg_temp,
+                MIN(e.temperature) AS min_temp,
+                MAX(e.temperature) AS max_temp
             FROM environment_data_term1 e
             JOIN plant_environment_sensors pes
             ON pes.sensor_id = e.sensor_id
@@ -117,8 +117,8 @@ def get_24h_env_temp_avg_min_max(plant_id):
         cur.close()
         release_db_connection(conn)
 
-    if row and row[0] is not None:
-        return row[0], row[1], row[2]
+    if row and row["avg_temp"] is not None:
+        return row["avg_temp"], row["min_temp"], row["max_temp"]
 
     return None, None, None
 
@@ -129,9 +129,9 @@ def get_24h_avg_min_max(plant_id, column):
     try:
         cur.execute(f"""
             SELECT
-                AVG({column}),
-                MIN({column}),
-                MAX({column})
+                AVG(column) AS avg_val,
+                MIN(column) AS min_val,
+                MAX(column) AS max_val
             FROM ess_data_term1
             WHERE plant_id = %s
             AND measured_at >= NOW() - INTERVAL '5 minutes'
@@ -205,7 +205,7 @@ def get_last_heartbeat(pod):
     finally:
         cur.close()
         release_db_connection(conn)
-    return row[0] if row else None
+    return row["heartbeat"] if row else None
 
 
 def store_alteo_response(pod, payload, response, status):
