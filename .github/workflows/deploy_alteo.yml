@@ -1,4 +1,4 @@
-name: Deploy ALTEO VM (self-hosted)
+name: Deploy [PROD] ALTEO API CONTROL VM (self-hosted)
 
 on:
   push:
