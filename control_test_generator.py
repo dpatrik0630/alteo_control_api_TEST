@@ -1,7 +1,7 @@
 import time
 import threading
 from datetime import datetime
-from db import get_db_connection
+from db import get_db_connection, release_db_connection
 
 # ==========================================
 # CONFIG
@@ -34,7 +34,7 @@ def get_active_pods():
 
     pods = [r[0] for r in cur.fetchall()]
     cur.close()
-    conn.close()
+    release_db_connection(conn)
     return pods
 
 
@@ -66,7 +66,7 @@ def write_test_setpoint(pod, setpoint):
 
     conn.commit()
     cur.close()
-    conn.close()
+    release_db_connection(conn)
 
     print(f"[TEST CTRL] POD {pod} → forced {setpoint} kW")
 

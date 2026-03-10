@@ -14,9 +14,10 @@ USE_HEARTBEAT = False
 API_URL = "https://ams-partner-api.azure-api.net/plant-control/api/setpoint"
 
 CYCLE_TIME = 2
-MAX_WORKERS = 8
+MAX_WORKERS = 16
+session = requests.Session()
 
-executor = ThreadPoolExecutor(max_workers=8)
+executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 def get_api_key():
     key = os.getenv("ALTEO_API_KEY")
@@ -33,7 +34,7 @@ def get_latest_plant_data():
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         cur.execute("""
-            SELECT DISTINCT ON (p.id)
+            SELECT
                 p.id AS plant_id,
                 pd.pod_id,
                 pd.measured_at,
@@ -41,12 +42,28 @@ def get_latest_plant_data():
                 pd.cos_phi,
                 pd.available_power_min,
                 pd.available_power_max,
-                pd.reference_power
+                pd.reference_power,
+                EXISTS (
+                    SELECT 1
+                    FROM ess_units e
+                    WHERE e.plant_id = p.id
+                ) AS has_ess
             FROM plants p
-            JOIN plant_data_term1 pd
-                ON pd.plant_id = p.id
+            JOIN LATERAL (
+                SELECT
+                    pod_id,
+                    measured_at,
+                    sum_active_power,
+                    cos_phi,
+                    available_power_min,
+                    available_power_max,
+                    reference_power
+                FROM plant_data_term1 pd
+                WHERE pd.plant_id = p.id
+                ORDER BY measured_at DESC
+                LIMIT 1
+            ) pd ON true
             WHERE p.alteo_api_control = true
-            ORDER BY p.id, pd.measured_at DESC
         """)
 
         rows = cur.fetchall()
@@ -129,21 +146,20 @@ def get_24h_avg_min_max(plant_id, column):
     try:
         cur.execute(f"""
             SELECT
-                AVG(column) AS avg_val,
-                MIN(column) AS min_val,
-                MAX(column) AS max_val
+                AVG({column}) AS avg_val,
+                MIN({column}) AS min_val,
+                MAX({column}) AS max_val
             FROM ess_data_term1
             WHERE plant_id = %s
             AND measured_at >= NOW() - INTERVAL '5 minutes'
         """, (plant_id,))
-
         row = cur.fetchone()
     finally:
         cur.close()
         release_db_connection(conn)
 
-    if row and row[0] is not None:
-        return row[0], row[1], row[2]
+    if row and row["avg_val"] is not None:
+        return row["avg_val"], row["min_val"], row["max_val"]
 
     return None, None, None
 
@@ -189,81 +205,61 @@ def update_ess_24h_stats_by_id(
         release_db_connection(conn)
 
 
-def get_last_heartbeat(pod):
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    try:
-        cur.execute("""
-            SELECT heartbeat
-            FROM alteo_controls_inbox
-            WHERE pod = %s
-            ORDER BY received_at DESC
-            LIMIT 1
-        """, (pod,))
+def get_last_heartbeat(cur, pod):
 
-        row = cur.fetchone()
-    finally:
-        cur.close()
-        release_db_connection(conn)
+    cur.execute("""
+        SELECT heartbeat
+        FROM alteo_controls_inbox
+        WHERE pod = %s
+        ORDER BY received_at DESC
+        LIMIT 1
+    """, (pod,))
+
+    row = cur.fetchone()
     return row["heartbeat"] if row else None
 
 
-def store_alteo_response(pod, payload, response, status):
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+def store_alteo_response(cur, pod, payload, response, status):
 
-    try:
-        cur.execute("""
-            INSERT INTO alteo_send_log (
-                pod,
-                request_json,
-                response_json,
-                status_code
-            ) VALUES (%s,%s,%s,%s)
-        """, (
+    cur.execute("""
+        INSERT INTO alteo_send_log (
             pod,
-            json.dumps(payload),
-            json.dumps(response),
-            status
-        ))
+            request_json,
+            response_json,
+            status_code
+        ) VALUES (%s,%s,%s,%s)
+    """, (
+        pod,
+        json.dumps(payload),
+        json.dumps(response),
+        status
+    ))
 
-        conn.commit()
-    finally:
-        cur.close()
-        release_db_connection(conn)
 
+def update_heartbeat_inbox(cur, pod, heartbeat, sum_setpoint, scheduled_reference):
 
-def update_heartbeat_inbox(pod, heartbeat, sum_setpoint, scheduled_reference):
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    try:
-        cur.execute("""
-            INSERT INTO alteo_controls_inbox (
-                pod,
-                heartbeat,
-                sum_setpoint,
-                scheduled_reference
-            )
-            VALUES (%s,%s,%s,%s)
-            ON CONFLICT (pod)
-            DO UPDATE SET
-                heartbeat = EXCLUDED.heartbeat,
-                sum_setpoint = EXCLUDED.sum_setpoint,
-                scheduled_reference = EXCLUDED.scheduled_reference,
-                received_at = NOW()
-            WHERE alteo_controls_inbox.heartbeat IS NULL
-            OR alteo_controls_inbox.heartbeat < EXCLUDED.heartbeat;
-        """, (
+    cur.execute("""
+        INSERT INTO alteo_controls_inbox (
             pod,
             heartbeat,
             sum_setpoint,
             scheduled_reference
-        ))
-        conn.commit()
-    finally:
-        cur.close()
-        release_db_connection(conn)
-
+        )
+        VALUES (%s,%s,%s,%s)
+        ON CONFLICT (pod)
+        DO UPDATE SET
+            heartbeat = EXCLUDED.heartbeat,
+            sum_setpoint = EXCLUDED.sum_setpoint,
+            scheduled_reference = EXCLUDED.scheduled_reference,
+            received_at = NOW()
+        WHERE alteo_controls_inbox.heartbeat IS NULL
+        OR alteo_controls_inbox.heartbeat < EXCLUDED.heartbeat;
+    """, (
+        pod,
+        heartbeat,
+        sum_setpoint,
+        scheduled_reference
+    ))
 
 # -------------------------------------------------
 # Payload builder
@@ -374,21 +370,34 @@ def send_sync(measurement):
 
     pod = measurement["pod_id"]
 
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    start = time.time()
+
     try:
         # ---- HEARTBEAT ----
-        heartbeat = get_last_heartbeat(pod) or 1
+        heartbeat = get_last_heartbeat(cur, pod) or 1
 
         # ---- ESS ----
-        ess_data = get_latest_ess_data(measurement["plant_id"])
+        ess_data = None
+
+        if measurement["has_ess"]:
+            ess_data = get_latest_ess_data(measurement["plant_id"])
 
         # ---- ENV ----
-        env_avg_24h, env_min_24h, env_max_24h = \
-            get_24h_env_temp_avg_min_max(measurement["plant_id"])
+        env_avg_24h = env_min_24h = env_max_24h = None
+
+        if measurement["has_ess"]:
+            env_avg_24h, env_min_24h, env_max_24h = \
+                get_24h_env_temp_avg_min_max(measurement["plant_id"])
+        else:
+            env_avg_24h = env_min_24h = env_max_24h = None
 
         batt_avg_24h = batt_min_24h = batt_max_24h = None
         cont_avg_24h = cont_min_24h = cont_max_24h = None
 
-        if ess_data:
+        if measurement["has_ess"] and ess_data:
             batt_avg_24h, batt_min_24h, batt_max_24h = \
                 get_24h_avg_min_max(
                     measurement["plant_id"],
@@ -422,12 +431,19 @@ def send_sync(measurement):
             "Ocp-Apim-Subscription-Key": get_api_key()
         }
 
-        resp = requests.post(
+        http_start = time.time()
+        print(f"[HTTP START] {pod}")
+
+        #resp = requests.post(
+        resp = session.post(
             API_URL,
             headers=headers,
             json=payload,
-            timeout=5
+            timeout=2
         )
+
+        http_time = time.time() - http_start
+        print(f"[HTTP END] {pod} took {http_time:.2f}s")
 
         status = resp.status_code
 
@@ -441,6 +457,7 @@ def send_sync(measurement):
             if controls:
                 c = controls[0]
                 update_heartbeat_inbox(
+                    cur,
                     pod,
                     c.get("heartbeat"),
                     c.get("sumSetPoint"),
@@ -448,38 +465,45 @@ def send_sync(measurement):
                 )
 
         store_alteo_response(
+            cur,
             pod,
             payload,
             response_data,
             status
         )
 
+        conn.commit()
+
     except Exception as e:
         print(f"[SENDER ERROR] {pod}: {e}")
+        
+        print(f"[SENDER DEBUG] {pod} took {time.time()-start:.2f}s")
+    finally:
+        cur.close()
+        release_db_connection(conn)
 
 
 async def main():
     print("[SENDER] High performance mode")
 
-    loop = asyncio.get_running_loop()
+    #loop = asyncio.get_running_loop()
 
     while True:
         start = time.monotonic()
 
-        measurements = await loop.run_in_executor(
+        '''measurements = await loop.run_in_executor(
             executor,
             get_latest_plant_data
+        )'''
+        measurements = await asyncio.to_thread(get_latest_plant_data)
+
+        await asyncio.gather(
+            *[asyncio.to_thread(send_sync, m) for m in measurements]
         )
 
-        tasks = [
-            loop.run_in_executor(executor, send_sync, m)
-            for m in measurements
-        ]
-
-        await asyncio.gather(*tasks)
-
         elapsed = time.monotonic() - start
-        sleep_time = max(0, CYCLE_TIME - elapsed)
+        #sleep_time = max(0, CYCLE_TIME - elapsed)
+        sleep_time = max(0.01, CYCLE_TIME - elapsed)
 
         print(f"[SENDER] Cycle time: {elapsed:.2f}s")
 

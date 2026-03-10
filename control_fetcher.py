@@ -3,7 +3,7 @@ import json
 import os
 import requests
 from datetime import datetime
-from db import get_db_connection
+from db import get_db_connection, release_db_connection
 
 API_URL = "https://ams-partner-api.azure-api.net/plant-control/api/setpoint"
 CHECK_INTERVAL = 30  # mp-ként próbálja újra, ha nem volt frissítés
@@ -33,7 +33,7 @@ def update_heartbeat_inbox(pod, heartbeat, sum_setpoint, scheduled_reference, us
     """, (pod, heartbeat, sum_setpoint, scheduled_reference, usesetpoint))
     conn.commit()
     cur.close()
-    conn.close()
+    release_db_connection(conn)
 
 
 async def fetch_initial_heartbeat():
@@ -63,8 +63,12 @@ async def fetch_initial_heartbeat():
             sp = ctrl.get("sumSetPoint")
             sr = ctrl.get("scheduledReference")
             usp = ctrl.get("useSetPoint", 0)
-            update_heartbeat_inbox(pod, hb, sp, sr, usp)
-            print(f"[CTRL_FETCHER] Initial heartbeat stored for {pod}: {hb}")
+
+            if sp is not None:
+                update_heartbeat_inbox(pod, hb, sp, sr, usp)
+                print(f"[CTRL_FETCHER] Updated setpoint for {pod}: {sp}")
+            else:
+                print(f"[CTRL_FETCHER] No new setpoint for {pod}")
 
     except Exception as e:
         print(f"[CTRL_FETCHER] Error: {e}")

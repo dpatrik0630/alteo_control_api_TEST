@@ -4,13 +4,13 @@
   "controls": {
     "activePowerLimitPercent": {
       "description": "Active power limitation of total PV output as percentage of rated power",
-      "address": 40233,
+      "address": 40232,
       "quantity": 1,
       "datatype": "uint16",
       "unit": "%",
       "scale_factor_register": 40251,
       "enable_register": {
-        "address": 40237,
+        "address": 40236,
         "enable_value": 1
       },
       "rw": "RW"

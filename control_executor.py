@@ -17,7 +17,7 @@ print("========== CONTROL EXECUTOR VERSION 2 ==========")
 # CONFIG
 # ==============================
 
-CONTROL_INTERVAL = 1.5
+CONTROL_INTERVAL = 2.0
 DEADBAND_KW = 1.0
 KP = 0.3
 MIN_WRITE_INTERVAL = 4.0
@@ -205,7 +205,7 @@ def control_loop(pod_id):
     while True:
         start = time.monotonic()
 
-        print(f"[CTRL][LOOP] Checking POD={pod_id}")
+        #print(f"[CTRL][LOOP] Checking POD={pod_id}")
 
         '''if should_skip(pod_id):
             time.sleep(1)
@@ -275,6 +275,8 @@ def control_loop(pod_id):
                     f"[CTRL][SKIP][DEADBAND] POD={pod_id} "
                     f"error={error}"
                 )
+                elapsed = time.monotonic() - start
+                time.sleep(max(0, CONTROL_INTERVAL - elapsed))
                 continue
 
             now = time.monotonic()
@@ -317,7 +319,17 @@ def control_loop(pod_id):
             # ---- PV ONLY (Closed Loop / Lágy szabályozással) ----
             elif plant_type == "PV_ONLY":
                 print(f"[CTRL][BRANCH] PV_ONLY for POD={pod_id}", flush=True)
-                
+
+                # Ha nincs túltermelés, nem szabályozunk
+                if actual_kw <= target_kw:
+                    print(
+                        f"[CTRL][PV_ONLY][SKIP] POD {pod_id} "
+                        f"actual={actual_kw:.2f} <= target={target_kw:.2f}",
+                        flush=True
+                    )
+                    elapsed = time.monotonic() - start
+                    time.sleep(max(0, CONTROL_INTERVAL - elapsed))
+                    continue
                 # Kiszámoljuk a korrekciót (P-tag)
                 # Ha a mérés (actual) több mint a cél (target), az error negatív lesz, 
                 # így a new_limit csökkenni fog.
